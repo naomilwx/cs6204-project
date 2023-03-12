@@ -4,8 +4,10 @@ import torchvision
 
 from transformers import AutoTokenizer, AutoModel
 
-def load_pretrained_resnet(img_channels, num_classes, save_path):
+def load_pretrained_resnet(img_channels, num_classes, save_path, fc_bias=True):
     model = torchvision.models.resnet50(num_classes=num_classes, weights=None)
+    if fc_bias == False:
+        model.fc = nn.Linear(2048, num_classes, bias=False)
     model.conv1 = torch.nn.Conv2d(img_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
     model.load_state_dict(torch.load(save_path))
     return model
@@ -13,11 +15,20 @@ def load_pretrained_resnet(img_channels, num_classes, save_path):
 def resnet_backbone(model):
     return torch.nn.Sequential(*(list(model.children())[:-2]))
 
+def load_medclip_retrained_resnet(path):
+    return resnet_backbone(load_pretrained_resnet(1, 512, path, False))
+
 class ImageEncoder(nn.Module):
-    def __init__(self, backbone, embed_dims):
+    def __init__(self, backbone, embed_dims, freeze_backbone=False):
         super().__init__()
         self.backbone = backbone
         self.proj = nn.Linear(2048, embed_dims)
+        if freeze_backbone:
+            self.set_backbone_trainable(False)
+    
+    def set_backbone_trainable(self, trainable):
+        for param in self.backbone.parameters():
+            param.requires_grad = trainable
 
     def forward(self, input):
         # B, C, H, W
@@ -34,16 +45,18 @@ class TextEncoder(nn.Module):
         self.proj = nn.Linear(768, embed_dims)
         self.device = device
         if freeze_backbone:
-            self.freeze_backbone()
+            self.set_backbone_trainable(False)
 
-    def freeze_backbone(self):
+    def set_backbone_trainable(self, trainable):
         for param in self.backbone.parameters():
-            param.requires_grad = False
+            param.requires_grad = trainable
     
     def forward(self, input):
-        tokens = self.tokenizer(input, return_tensors='pt', padding=True).to(self.device)
+        tokens = self.tokenizer(input, max_length=77, return_tensors='pt', padding='max_length').to(self.device)
         out = self.backbone(**tokens)
-        return self.proj(out['pooler_output'])
+        enc = out['pooler_output']
+        # enc = out['last_hidden_state'][:, 0]
+        return self.proj(enc)
 
 class ImageTextEmbedding(nn.Module):
     def __init__(self, img_backbone, embed_dims, logit_scale_init_value=0.1, device='cpu'):
@@ -57,13 +70,14 @@ class ImageTextEmbedding(nn.Module):
     
     def embed_text(self, text):
         text_emb = self.text_model(text)
-        return nn.functional.normalize(text_emb, dim=1)
+        return text_emb / text_emb.norm(dim=-1, keepdim=True)
     
     def embed_image(self, image, pool=False):
         img_emb = self.img_model(image) # B, D, H, W
         if pool:
             img_emb = self.flatten(self.gap(img_emb)) # B, D
-        return nn.functional.normalize(img_emb, dim=1)
+        return img_emb / img_emb.norm(dim=-1, keepdim=True)
+
     
     def compute_logits(self, text_emb, img_emb):
         self.logit_scale.data = torch.clamp(self.logit_scale.data, 0, 4.6052)
