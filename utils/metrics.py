@@ -31,11 +31,12 @@ def accuracy(output, target, topk=(1,)):
     return [correct[:min(k, maxk)].reshape(-1).float().sum(0) * 100. / batch_size for k in topk]
 
 def multilabel_accuracy(output, target):
-    # Returns the average accuracy across classes
-    acc = 0
-    for l in range(target.shape[1]):
-        acc += accuracy(output[:,l], target[:,l])[0].item()
-    return acc/target.shape[1]
+    # Returns the average accuracy across classes    
+    # Target is 1 at indices where class label is true
+    # Output should be higher at indices where class label is true
+    pred = output.sigmoid().round()
+    correct = pred.eq(target)
+    return correct.float().sum().item()/target.numel() * 100
 
 def calculate_auc(y_score, y_true):
     '''AUC metric.
