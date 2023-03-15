@@ -34,8 +34,7 @@ class Dataset(data.Dataset):
     def __getitem__(self, idx):
         img_id = self.image_ids[idx]
         info = self.image_info[self.image_info['image_id'] == img_id].iloc[0]
-        # Cast to float because this is passed as class probabilities downstream
-        class_inds = info[self.classes].to_numpy().astype(np.float32)
+        class_inds = info[self.classes].to_numpy().astype(int)
         img_path = os.path.join(self.img_root, info['file'])
         image = self.transforms(io.imread(img_path))
         return image, class_inds

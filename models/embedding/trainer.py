@@ -1,3 +1,4 @@
+import torch
 import copy
 from utils.metrics import AverageMeter, calculate_auc, multilabel_accuracy
 
@@ -7,12 +8,11 @@ class Trainer:
         self.device = device
         self.class_labels = class_labels
     
-    def run_train(self, epochs, dataloader, val_dataloader):
+    def run_train(self, epochs, dataloader, val_dataloader, lr=1e-4):
         model = self.model.to(self.device)
         best_epoch = None
         best_acc = None
-        # optimizer = torch.optim.AdamW(model.parameters(), lr=1e-2, weight_decay=1e-2)
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
         for epoch in range(epochs):
             model.train()
             loss_meter = AverageMeter()

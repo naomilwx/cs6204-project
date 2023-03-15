@@ -101,6 +101,7 @@ class ImageTextEmbedding(nn.Module):
     
     def contrastive_logit_loss(self, logits_per_text, logits_per_image, labels):
          # Image-label contrastive loss, which is similar to classification loss, except using the computed logits
+        labels = labels.float()
         itl = self.criterion(logits_per_image, labels)
         til = self.criterion(logits_per_text, labels.t())
         return (itl+til) / 2
