@@ -23,7 +23,7 @@ class Dataset(data.Dataset):
         if mean_std is not None:
             normalize =  transforms.Normalize(mean=mean_std['mean'], std=mean_std['std'])
         tfms += [
-            transforms.Resize((224, 224)),
+            transforms.Resize((224, 224), antialias=True),
             normalize
         ]
         self.transforms = transforms.Compose(tfms)

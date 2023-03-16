@@ -24,7 +24,7 @@ class SupConLoss(nn.Module):
         """
         device = (torch.device('cuda')
                   if features.is_cuda
-                  else torch.device('cpu'))
+                  else torch.device('mps') if features.is_mps else torch.device('cpu'))
 
         if len(features.shape) < 3:
             raise ValueError('`features` needs to be [bsz, n_views, ...],'
@@ -74,16 +74,13 @@ class SupConLoss(nn.Module):
             0
         )
         mask = mask * logits_mask
-
         # compute log_prob
         exp_logits = torch.exp(logits) * logits_mask
-        log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True))
-
+        log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True)).nan_to_num(0, 0, 0)
         # compute mean of log-likelihood over positive
         mean_log_prob_pos = (mask * log_prob).sum(1) / mask.sum(1)
-
         # loss
-        loss = - mean_log_prob_pos
+        loss = - mean_log_prob_pos.nan_to_num(0, 0, 0)
         loss = loss.view(anchor_count, batch_size).mean()
 
         return loss
