@@ -78,10 +78,12 @@ class ImageTextEmbedding(nn.Module):
             img_emb = self.flatten(self.gap(img_emb)) # B, D
         return img_emb / img_emb.norm(dim=-1, keepdim=True)
 
+    def get_logit_scale(self):
+        self.logit_scale.data = torch.clamp(self.logit_scale.data, 0, 4.6052)
+        return self.logit_scale.exp()
     
     def compute_logits(self, text_emb, img_emb):
-        self.logit_scale.data = torch.clamp(self.logit_scale.data, 0, 4.6052)
-        logit_scale = self.logit_scale.exp()        
+        logit_scale = self.get_logit_scale()        
         if len(img_emb.shape) == 4:
             logits_per_image = logit_scale * torch.matmul(img_emb.permute(2,3,0,1), text_emb.t())
         else:

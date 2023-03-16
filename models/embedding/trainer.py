@@ -36,6 +36,7 @@ class Trainer:
                 best_acc = val_acc
                 self.best_model = copy.deepcopy(model)
                 best_epoch = epoch
+        self.model = model
         print('Best epoch: ', best_epoch+1)
 
     def run_eval(self, model, dataloader):
@@ -51,7 +52,6 @@ class Trainer:
                 text_embeddings, image_embeddings = model(self.class_labels, images, pool=True)
 
                 logits_per_text, logits_per_image = model.compute_logits(text_embeddings, image_embeddings)
-        
                 loss = model.contrastive_logit_loss(logits_per_text, logits_per_image, class_inds)
                 loss_meter.update(loss.item(), len(class_inds))
 
