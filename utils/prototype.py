@@ -5,12 +5,16 @@ def squared_euclidean(v1, v2):
     return ((v1-v2)**2).sum(axis=-1)
 
 def class_prototype_rrp(features, label_inds=None):
-    # features: (N, D) or (L, N, D)
+    # features: (N, D) or (N, L, D) -> transform to (L, N, D)
+    # label_inds: (N, L)
+    if len(features.shape) == 2:
+        features = features.unsqueeze(0)
+    else:
+        features = features.permute(1,0,2) # (L, N, D)
+    
     classes_count = features.shape[-2]
     if classes_count < 2:
         return features
-    if len(features.shape) == 2:
-        features = features.unsqueeze(0)
     
     if label_inds is not None:
         classes_count = torch.nonzero(label_inds)[:,1].bincount()
@@ -36,14 +40,17 @@ def class_prototype_rrp(features, label_inds=None):
     return pc.t().div(weights).t()
 
 def class_prototype_inf(features, label_inds=None):
-    # features: (N, D) or (L, N, D)
+    # features: (N, D) or (N, L, D) -> transform to (L, N, D)
     # label_inds: (N, L)
+    if len(features.shape) == 2:
+        features = features.unsqueeze(0)
+    else:
+        features = features.permute(1,0,2)
+
     classes_count = features.shape[-2]
     if classes_count < 2:
         return features
 
-    if len(features.shape) == 2:
-        features = features.unsqueeze(0)
     if label_inds is not None:
         classes_count = torch.nonzero(label_inds)[:,1].bincount()
         # mask: (L, N)
@@ -71,26 +78,28 @@ def class_prototype_inf(features, label_inds=None):
     return pc.t().div(inf_total).t()
 
 def class_prototype_mean(features, label_inds=None):
-    # features: (N, D) or (L, N, D)
+    # features: (N, D) or (N, L, D)
+    # label_inds: (N, L)
+
     if label_inds is None:
-        return features.mean(axis=-2)
-    mask = label_inds.t()
+        return features.mean(axis=0)
+    
     classes_count = torch.nonzero(label_inds)[:,1].bincount()
-    ftotal = (mask.unsqueeze(-1).expand_as(features)*features).sum(axis=-2)
+    ftotal = (label_inds.unsqueeze(-1).expand_as(features)*features).sum(axis=0)
+
     return ftotal.div(classes_count.unsqueeze(-1).expand_as(ftotal))
 
 def class_variance(features, label_inds=None):
-    # features: (N, D) or (L, N, D)
+    # features: (N, D) or (N, L, D)
+    # label_inds: (N, L)
     if label_inds is None:
-        return features.var(axis=-2)
+        return features.var(axis=0)
     
-    mask = label_inds.t() # (L, N)
+    mean = class_prototype_mean(features, label_inds).unsqueeze(0)
+
     classes_count = torch.nonzero(label_inds)[:,1].bincount()
 
-    features = mask.unsqueeze(-1).expand_as(features)*features
-    # D or (L, D) -> (N, D) or (L, N, D)
-    mean = class_prototype_mean(features, label_inds).unsqueeze(-2)
-    
-    total = ((features - mean) ** 2).sum(axis=-2) # D or (L, D)
+    total = ((features - mean) ** 2)
+    total = label_inds.unsqueeze(-1).expand_as(total)*total
+    total = total.sum(axis=0) # D or (L, D)
     return total.div((classes_count - 1).unsqueeze(-1).expand_as(total))
-    
