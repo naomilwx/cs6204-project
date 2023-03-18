@@ -22,11 +22,11 @@ def count_classes(info, classes):
                 classes_count[c] += 1
     return classes_count
 
-def get_query_and_support_ids(img_info, split_file):
+def get_query_and_support_ids(img_info, split_file, split='train'):
     with open(split_file, 'rb') as fp:
-        cxr_train_query = pickle.load(fp)
+        query_split = pickle.load(fp)
     query_image_ids = []
-    for ids in cxr_train_query.values():
+    for ids in query_split.values():
         query_image_ids.extend(ids)
-    support_image_ids = img_info[(img_info['meta_split'] == 'train') & ~img_info['image_id'].isin(query_image_ids)]['image_id'].to_list()
+    support_image_ids = img_info[(img_info['meta_split'] == split) & ~img_info['image_id'].isin(query_image_ids)]['image_id'].to_list()
     return query_image_ids, support_image_ids

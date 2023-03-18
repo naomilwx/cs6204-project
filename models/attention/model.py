@@ -5,19 +5,20 @@ from utils.contrastive_loss import SupConLoss
 def image_text_logits(text_embeddings, prototypes, scale=1):
     # text_embeddings: (14, 512) x prototypes: (140, 14, 512) -> (140, 14)
     fac = text_embeddings.unsqueeze(0).expand_as(prototypes)
+
     return (fac * prototypes).sum(axis=2) * scale
 
 class LabelImageAttention(nn.Module):
     def __init__(self, dim_in, n_head, dropout=0.1, num_layers=6, temperature=1):
         super().__init__()
         self.attn = nn.Transformer(dim_in, batch_first=True, nhead=n_head, dropout=dropout, num_decoder_layers=num_layers, num_encoder_layers=num_layers)
-        self.con_loss = SupConLoss(temperature=temperature)
+        self.con_loss = SupConLoss(temperature=temperature, contrast_mode='one')
+        self.class_loss = nn.CrossEntropyLoss()
 
     def forward(self, texts, images, label_inds=None):
         # transformer: (N, S, E), (N, T, E) -> (N, T, E)
         # texts: (L,D) , images: (N,D,H,W), label_inds: (N, L)
         texts = texts.repeat(images.shape[0], 1, 1)
-        # view size is not compatible with input tensor's size and stride (at least one dimension spans across two contiguous subspaces). Use .reshape(...) instead.
         images = images.flatten(start_dim=2).permute(0, 2, 1)
         mask = None
         if label_inds is not None:
@@ -30,7 +31,14 @@ class LabelImageAttention(nn.Module):
         out = self.attn(images, texts, tgt_key_padding_mask=mask)
         return out / out.norm(dim=-1, keepdim=True)
     
-    def loss(self, results, label_inds):
+    def loss(self, text_embeddings, prototypes, label_inds):
+        logits = image_text_logits(text_embeddings, prototypes)
+        return self.contrastive_loss(prototypes, label_inds) + self.classification_loss(logits, label_inds)
+    
+    def classification_loss(self, logits, label_inds):
+        return self.class_loss(logits, label_inds.float())
+    
+    def contrastive_loss(self, results, label_inds):
         # results: (N, L, D), labels: (N, L)
         classes = torch.nonzero(label_inds)[:,1] # (Np,)
         prototypes = results[label_inds.bool()] # (Np, D)
@@ -38,7 +46,7 @@ class LabelImageAttention(nn.Module):
 
 
 class LabelImagePrototypeModel(nn.Module):
-    def __init__(self, encoder, n_head, dim_in=512, dropout=0.1, num_layers=4, temperature=1):
+    def __init__(self, encoder, n_head, dim_in=512, dropout=0.1, num_layers=6, temperature=1):
         super().__init__()
         self.encoder = encoder
         self.attention = LabelImageAttention(dim_in, n_head, dropout, num_layers, temperature)
@@ -56,5 +64,5 @@ class LabelImagePrototypeModel(nn.Module):
         prototypes = self.attention(text_embedding, image_emedding, label_inds)
         return text_embedding, image_emedding, prototypes
     
-    def attention_loss(self, prototypes, label_inds):
-        return self.attention.loss(prototypes, label_inds)
+    def attention_loss(self, text_embeddings, prototypes, label_inds):
+        return self.attention.loss(text_embeddings, prototypes, label_inds)

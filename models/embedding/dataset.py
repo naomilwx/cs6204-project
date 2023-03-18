@@ -1,6 +1,7 @@
 import os
 from torch.utils import data
 import numpy as np
+import pandas as pd
 
 from skimage import io
 import torchvision.transforms as transforms
@@ -31,6 +32,10 @@ class Dataset(data.Dataset):
     def class_labels(self):
         return [self.label_names[c] for c in self.classes]
     
+    def get_class_indicators(self):
+        img_infos= pd.DataFrame(self.image_ids, columns=['image_id']).merge(self.image_info, on='image_id', how='inner')
+        return img_infos[self.classes].to_numpy().astype(int)
+
     def __getitem__(self, idx):
         img_id = self.image_ids[idx]
         info = self.image_info[self.image_info['image_id'] == img_id].iloc[0]
