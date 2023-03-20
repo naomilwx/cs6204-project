@@ -17,7 +17,7 @@ class FewShotBatchSampler(Sampler):
         self.num_classes = self.labels.shape[1]
         self.n_ways = n_ways
         if self.n_ways is None:
-            self.n_ways = len(self.num_classes)
+            self.n_ways = self.num_classes
         self.shots = k_shot
         inds, class_indices = np.nonzero(labels)
         self.class_indices = {}

@@ -23,8 +23,8 @@ def class_prototype_rrp(features, label_inds=None):
         features = mask.unsqueeze(-1).expand_as(features)*features
     ftotal = features.sum(axis=-2)
 
-    weights = torch.zeros(features.shape[0])
-    pc = torch.zeros(features.shape[0], features.shape[2])
+    weights = torch.zeros(features.shape[0], device=features.device)
+    pc = torch.zeros(features.shape[0], features.shape[2], device=features.device)
     for i in range(features.shape[-2]):
         p = features[:,i]
 
@@ -62,8 +62,8 @@ def class_prototype_inf(features, label_inds=None):
         ftotal = features.sum(axis=-2)
         fmean = ftotal/classes_count
 
-    inf_total = torch.zeros(features.shape[0])
-    pc = torch.zeros(features.shape[0], features.shape[2])
+    inf_total = torch.zeros(features.shape[0], device=features.device)
+    pc = torch.zeros(features.shape[0], features.shape[2], device=features.device)
     for i in range(features.shape[-2]):
         p = features[:,i]
         if label_inds is not None:

@@ -30,6 +30,11 @@ class ImageEncoder(nn.Module):
         for param in self.backbone.parameters():
             param.requires_grad = trainable
 
+    def set_trainable(self, trainable, include_backbone):
+        for param in self.proj.parameters():
+            param.requires_grad = trainable
+        self.set_backbone_trainable(include_backbone)
+
     def forward(self, input):
         # B, C, H, W
         img = self.backbone(input)
@@ -50,6 +55,12 @@ class TextEncoder(nn.Module):
     def set_backbone_trainable(self, trainable):
         for param in self.backbone.parameters():
             param.requires_grad = trainable
+
+    def set_trainable(self, trainable, include_backbone=False):
+        for param in self.proj.parameters():
+            param.requires_grad = trainable
+        self.set_backbone_trainable(include_backbone)
+
     
     def forward(self, input):
         tokens = self.tokenizer(input, max_length=77, return_tensors='pt', padding='max_length').to(self.device)
@@ -67,6 +78,10 @@ class ImageTextEmbedding(nn.Module):
         self.gap = nn.AdaptiveAvgPool2d(1)
         self.flatten = nn.Flatten(start_dim=1)
         self.criterion = nn.CrossEntropyLoss()
+
+    def set_trainable(self, trainable, include_image_bb, include_text_bb=False):
+        self.img_model.set_trainable(trainable, include_image_bb)
+        self.text_model.set_trainable(trainable, include_text_bb)
     
     def embed_text(self, text):
         text_emb = self.text_model(text)

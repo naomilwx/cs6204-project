@@ -15,6 +15,10 @@ class LabelImageAttention(nn.Module):
         self.con_loss = SupConLoss(temperature=temperature, contrast_mode='one')
         self.class_loss = nn.CrossEntropyLoss()
 
+    def set_trainable(self, trainable):
+        for param in self.attn.parameters():
+            param.requires_grad = trainable
+
     def forward(self, texts, images, label_inds=None):
         # transformer: (N, S, E), (N, T, E) -> (N, T, E)
         # texts: (L,D) , images: (N,D,H,W), label_inds: (N, L)
@@ -55,9 +59,8 @@ class LabelImagePrototypeModel(nn.Module):
         for param in self.encoder.parameters():
             param.requires_grad = False
 
-    def unfreeze_encoder(self):
-        self.encoder.img_model.proj.requires_grad = True
-        self.encoder.text_model.proj.requires_grad = True
+    def unfreeze_encoder(self, unfreeze_img_bb=False):
+        self.encoder.set_trainable(True, unfreeze_img_bb)
     
     def forward(self, class_labels, images, label_inds):
         text_embedding, image_emedding = self.encoder(class_labels, images, False)
