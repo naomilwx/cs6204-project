@@ -9,11 +9,12 @@ def image_text_logits(text_embeddings, prototypes, scale=1):
     return (fac * prototypes).sum(axis=2) * scale
 
 class LabelImageAttention(nn.Module):
-    def __init__(self, dim_in, n_head, dropout=0.1, num_layers=6, temperature=1):
+    def __init__(self, dim_in, n_head, dropout=0.1, num_layers=6, temperature=1, cls_weight=1):
         super().__init__()
         self.attn = nn.Transformer(dim_in, batch_first=True, nhead=n_head, dropout=dropout, num_decoder_layers=num_layers, num_encoder_layers=num_layers)
         self.con_loss = SupConLoss(temperature=temperature, contrast_mode='one')
         self.class_loss = nn.CrossEntropyLoss()
+        self.cls_weight = cls_weight
 
     def set_trainable(self, trainable):
         for param in self.attn.parameters():
@@ -37,7 +38,7 @@ class LabelImageAttention(nn.Module):
     
     def loss(self, text_embeddings, prototypes, label_inds):
         logits = image_text_logits(text_embeddings, prototypes)
-        return self.contrastive_loss(prototypes, label_inds) + self.classification_loss(logits, label_inds)
+        return self.contrastive_loss(prototypes, label_inds) + self.cls_weight * self.classification_loss(logits, label_inds)
     
     def classification_loss(self, logits, label_inds):
         return self.class_loss(logits, label_inds.float())
@@ -50,10 +51,10 @@ class LabelImageAttention(nn.Module):
 
 
 class LabelImagePrototypeModel(nn.Module):
-    def __init__(self, encoder, n_head, dim_in=512, dropout=0.1, num_layers=6, temperature=1):
+    def __init__(self, encoder, n_head, dim_in=512, dropout=0.1, num_layers=6, temperature=1, cls_weight=1):
         super().__init__()
         self.encoder = encoder
-        self.attention = LabelImageAttention(dim_in, n_head, dropout, num_layers, temperature)
+        self.attention = LabelImageAttention(dim_in, n_head, dropout, num_layers, temperature, cls_weight=cls_weight)
 
     def freeze_encoder(self):
         for param in self.encoder.parameters():

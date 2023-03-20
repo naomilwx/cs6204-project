@@ -80,7 +80,6 @@ def class_prototype_inf(features, label_inds=None):
 def class_prototype_mean(features, label_inds=None):
     # features: (N, D) or (N, L, D)
     # label_inds: (N, L)
-
     if label_inds is None:
         return features.mean(axis=0)
     
@@ -88,6 +87,14 @@ def class_prototype_mean(features, label_inds=None):
     ftotal = (label_inds.unsqueeze(-1).expand_as(features)*features).sum(axis=0)
 
     return ftotal.div(classes_count.unsqueeze(-1).expand_as(ftotal))
+
+def class_prototype_sum(features, label_inds=None):
+     # features: (N, D) or (N, L, D)
+    # label_inds: (N, L)
+    if label_inds is None:
+        return features.sum(axis=0)
+    return (label_inds.unsqueeze(-1).expand_as(features)*features).sum(axis=0)
+    
 
 def class_variance(features, label_inds=None):
     # features: (N, D) or (N, L, D)

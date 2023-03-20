@@ -79,7 +79,8 @@ class ImageTextEmbedding(nn.Module):
         self.flatten = nn.Flatten(start_dim=1)
         self.criterion = nn.CrossEntropyLoss()
 
-    def set_trainable(self, trainable, include_image_bb, include_text_bb=False):
+    def set_trainable(self, trainable, include_image_bb, include_text_bb=False, include_logit_scale=False):
+        self.logit_scale.requires_grad = include_logit_scale
         self.img_model.set_trainable(trainable, include_image_bb)
         self.text_model.set_trainable(trainable, include_text_bb)
     
@@ -130,3 +131,19 @@ class ImageTextEmbedding(nn.Module):
         logits_per_text, logits_per_image = self.compute_logits(text_emb, img_emb)
         
         return self.contrastive_logit_loss(logits_per_text, logits_per_image, labels)
+    
+class ImageOnlyEmbedding(nn.Module):
+    def __init__(self, img_backbone, embed_dims):
+        super().__init__()
+        self.img_model = ImageEncoder(img_backbone, embed_dims)
+        self.gap = nn.AdaptiveAvgPool2d(1)
+        self.flatten = nn.Flatten(start_dim=1)
+
+    def embed_image(self, image, pool=False):
+        img_emb = self.img_model(image) # B, D, H, W
+        if pool:
+            img_emb = self.flatten(self.gap(img_emb)) # B, D
+        return img_emb / img_emb.norm(dim=-1, keepdim=True)
+    
+    def forward(self, img, pool=False):
+        return  self.embed_image(img, pool)

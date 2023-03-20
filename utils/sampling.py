@@ -18,6 +18,7 @@ class FewShotBatchSampler(Sampler):
         self.n_ways = n_ways
         if self.n_ways is None:
             self.n_ways = self.num_classes
+        self.subsample_classes = self.n_ways != self.num_classes
         self.shots = k_shot
         inds, class_indices = np.nonzero(labels)
         self.class_indices = {}
@@ -27,7 +28,7 @@ class FewShotBatchSampler(Sampler):
             np.random.shuffle(indices)
             self.class_indices[c] = indices
             total_batches += int(np.ceil(len(indices) / k_shot))
-        self.iterations = total_batches // self.n_ways
+        self.iterations = total_batches // self.n_ways # Average batches per class
         self.include_query = include_query
 
     def __iter__(self):
@@ -43,9 +44,9 @@ class FewShotBatchSampler(Sampler):
             if self.include_query:
                 query_list = []
                 support_list = []
-            classes = class_list[it * self.n_ways : (it + 1) * self.n_ways]
-            classes = sorted(classes, key=lambda c: len(self.class_indices[c]))
-            for c in classes:
+            self.curr_classes = class_list[it * self.n_ways : (it + 1) * self.n_ways]
+            self.curr_classes  = sorted(self.curr_classes , key=lambda c: len(self.class_indices[c]))
+            for c in self.curr_classes:
                 indices = class_indices[c]
                 diff = shots
                 selected = set()
