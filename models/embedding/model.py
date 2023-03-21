@@ -133,11 +133,13 @@ class ImageTextEmbedding(nn.Module):
         return self.contrastive_logit_loss(logits_per_text, logits_per_image, labels)
     
 class ImageOnlyEmbedding(nn.Module):
-    def __init__(self, img_backbone, embed_dims):
+    def __init__(self, img_backbone, embed_dims, logit_scale_init_value=0.1):
         super().__init__()
         self.img_model = ImageEncoder(img_backbone, embed_dims)
         self.gap = nn.AdaptiveAvgPool2d(1)
         self.flatten = nn.Flatten(start_dim=1)
+        self.criterion = nn.CrossEntropyLoss()
+        self.logit_scale = nn.Parameter(torch.log(torch.tensor(1/logit_scale_init_value)))
 
     def embed_image(self, image, pool=False):
         img_emb = self.img_model(image) # B, D, H, W
@@ -147,3 +149,13 @@ class ImageOnlyEmbedding(nn.Module):
     
     def forward(self, img, pool=False):
         return  self.embed_image(img, pool)
+    
+    def get_logit_scale(self):
+        self.logit_scale.data = torch.clamp(self.logit_scale.data, 0, 4.6052)
+        return self.logit_scale.exp()
+    
+    def loss(self, img_emb, labels):
+        logit_scale = self.get_logit_scale()
+        
+        logits = logit_scale * torch.matmul(labels.t(), img_emb).t()
+        return self.criterion(logits, labels.float())

@@ -18,7 +18,6 @@ class FewShotBatchSampler(Sampler):
         self.n_ways = n_ways
         if self.n_ways is None:
             self.n_ways = self.num_classes
-        self.subsample_classes = self.n_ways != self.num_classes
         self.shots = k_shot
         inds, class_indices = np.nonzero(labels)
         self.class_indices = {}
@@ -44,9 +43,9 @@ class FewShotBatchSampler(Sampler):
             if self.include_query:
                 query_list = []
                 support_list = []
-            self.curr_classes = class_list[it * self.n_ways : (it + 1) * self.n_ways]
-            self.curr_classes  = sorted(self.curr_classes , key=lambda c: len(self.class_indices[c]))
-            for c in self.curr_classes:
+            curr_classes = class_list[it * self.n_ways : (it + 1) * self.n_ways]
+            curr_classes  = sorted(curr_classes , key=lambda c: len(self.class_indices[c]))
+            for c in curr_classes:
                 indices = class_indices[c]
                 diff = shots
                 selected = set()
