@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import pickle
 
 def select_query_set(label_info, classes, num_per_class):
@@ -30,3 +31,12 @@ def get_query_and_support_ids(img_info, split_file, split='train'):
         query_image_ids.extend(ids)
     support_image_ids = img_info[(img_info['meta_split'] == split) & ~img_info['image_id'].isin(query_image_ids)]['image_id'].to_list()
     return query_image_ids, support_image_ids
+
+class DatasetConfig:
+    def __init__(self, img_path, info_path, training_split_path, label_names_map, classes_split_map, mean_std):
+        self.img_info = pd.read_pickle(info_path)
+        self.img_path = img_path
+        self.training_split_path = training_split_path
+        self.label_names_map = label_names_map
+        self.classes_split_map = classes_split_map
+        self.mean_std = mean_std

@@ -12,7 +12,7 @@ def create_single_class_sampler(labels):
     return WeightedRandomSampler(samples_weight, len(samples_weight))
 
 class FewShotBatchSampler(Sampler):
-    def __init__(self, labels, k_shot, n_ways=None, include_query=False) -> None:
+    def __init__(self, labels, k_shot, n_ways=None, include_query=False):
         self.labels = labels
         self.num_classes = self.labels.shape[1]
         self.n_ways = n_ways
@@ -30,22 +30,24 @@ class FewShotBatchSampler(Sampler):
         self.iterations = total_batches // self.n_ways # Average batches per class
         self.include_query = include_query
 
-    def __iter__(self):
+    def get_iteration_classes(self, iter):
         if self.num_classes == self.n_ways:
-            class_list = np.concatenate([np.arange(self.num_classes) for i in range(self.iterations)])
+            classes = np.arange(self.num_classes)
         else:
-            class_list = np.concatenate([np.random.choice(self.num_classes, self.num_classes, replace=False) for i in range(int(np.ceil(self.n_ways * self.iterations / self.num_classes)))])
+            classes = self.class_choices[iter * self.n_ways : (iter + 1) * self.n_ways]
+        classes = sorted(classes , key=lambda c: len(self.class_indices[c]))
+        return classes
+    
+    def generate_batches(self):
         class_indices = copy.copy(self.class_indices)
-
         shots = self.shots * 2 if self.include_query else self.shots
         for it in range(self.iterations):
             batch = set()
             if self.include_query:
                 query_list = []
                 support_list = []
-            curr_classes = class_list[it * self.n_ways : (it + 1) * self.n_ways]
-            curr_classes  = sorted(curr_classes , key=lambda c: len(self.class_indices[c]))
-            for c in curr_classes:
+            self.curr_classes = self.get_iteration_classes(it)
+            for c in self.curr_classes:
                 indices = class_indices[c]
                 diff = shots
                 selected = set()
@@ -72,6 +74,12 @@ class FewShotBatchSampler(Sampler):
                 yield(support_list+query_list)
             else:
                 yield list(batch)
+            
+    def __iter__(self):
+        if self.num_classes != self.n_ways:
+            self.class_choices = np.concatenate([np.random.choice(self.num_classes, self.num_classes, replace=False) for i in range(int(np.ceil(self.n_ways * self.iterations / self.num_classes)))])
+        
+        return self.generate_batches()
     
     def __len__(self):
         return self.iterations
