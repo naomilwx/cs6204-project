@@ -4,11 +4,16 @@ import torchvision
 
 from transformers import AutoTokenizer, AutoModel
 
+def adapt_resnet_input_channels(model, img_channels):
+    if model.conv1.in_channels != img_channels:
+        model.conv1 = torch.nn.Conv2d(img_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
+    return model
+
 def load_pretrained_resnet(img_channels, num_classes, save_path, fc_bias=True):
     model = torchvision.models.resnet50(num_classes=num_classes, weights=None)
     if fc_bias == False:
         model.fc = nn.Linear(2048, num_classes, bias=False)
-    model.conv1 = torch.nn.Conv2d(img_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
+    model = adapt_resnet_input_channels(model, img_channels)
     model.load_state_dict(torch.load(save_path))
     return model
 
@@ -43,10 +48,10 @@ class ImageEncoder(nn.Module):
 
 
 class TextEncoder(nn.Module):
-    def __init__(self, embed_dims, device='cpu', freeze_backbone=True):
+    def __init__(self, embed_dims, device='cpu', freeze_backbone=True, bert_pretrained_type='emilyalsentzer/Bio_ClinicalBERT'):
         super().__init__()
-        self.tokenizer = AutoTokenizer.from_pretrained("emilyalsentzer/Bio_ClinicalBERT")
-        self.backbone = AutoModel.from_pretrained("emilyalsentzer/Bio_ClinicalBERT")
+        self.tokenizer = AutoTokenizer.from_pretrained(bert_pretrained_type)
+        self.backbone = AutoModel.from_pretrained(bert_pretrained_type)
         self.proj = nn.Linear(768, embed_dims)
         self.device = device
         if freeze_backbone:
@@ -70,9 +75,9 @@ class TextEncoder(nn.Module):
         return self.proj(enc)
 
 class ImageTextEmbedding(nn.Module):
-    def __init__(self, img_backbone, embed_dims, logit_scale_init_value=0.1, device='cpu'):
+    def __init__(self, img_backbone, embed_dims, logit_scale_init_value=0.1, device='cpu', bert_pretrained_type='emilyalsentzer/Bio_ClinicalBERT'):
         super().__init__()
-        self.text_model = TextEncoder(embed_dims, device)
+        self.text_model = TextEncoder(embed_dims, device, bert_pretrained_type=bert_pretrained_type)
         self.img_model = ImageEncoder(img_backbone, embed_dims)
         self.logit_scale = nn.Parameter(torch.log(torch.tensor(1/logit_scale_init_value)))
         self.gap = nn.AdaptiveAvgPool2d(1)
@@ -132,6 +137,25 @@ class ImageTextEmbedding(nn.Module):
         
         return self.contrastive_logit_loss(logits_per_text, logits_per_image, labels)
     
+class DummyEncoder(nn.Module):
+    def __init__(self, embed_dims):
+        super().__init__()
+        self.embed_dims = embed_dims
+        self.gap = nn.AdaptiveAvgPool2d(1)
+        self.flatten = nn.Flatten(start_dim=1)
+    
+    def set_trainable(self, trainable, include_image_bb, include_logit_scale=False):
+        pass
+
+    def embed_image(self, image, pool=False):
+        emb = image[:, :self.embed_dims, :, :]
+        if pool:
+            emb = self.flatten(self.gap(emb)) # B, D
+        return emb / emb.norm(dim=-1, keepdim=True)
+    
+    def forward(self, img, pool=False):
+        return  self.embed_image(img, pool)
+    
 class ImageOnlyEmbedding(nn.Module):
     def __init__(self, img_backbone, embed_dims, logit_scale_init_value=0.1):
         super().__init__()
@@ -140,6 +164,10 @@ class ImageOnlyEmbedding(nn.Module):
         self.flatten = nn.Flatten(start_dim=1)
         self.criterion = nn.CrossEntropyLoss()
         self.logit_scale = nn.Parameter(torch.log(torch.tensor(1/logit_scale_init_value)))
+
+    def set_trainable(self, trainable, include_image_bb, include_logit_scale=False):
+        self.logit_scale.requires_grad = include_logit_scale
+        self.img_model.set_trainable(trainable, include_image_bb)
 
     def embed_image(self, image, pool=False):
         img_emb = self.img_model(image) # B, D, H, W

@@ -114,12 +114,12 @@ class ControlledFewShotBatchSampler(FewShotBatchSampler):
             classes = self.cycler.next_n(self.n_ways)
         
         if self.include_query:
-            classes = sorted(classes , key=lambda c: len(self.class_indices[c]))
+            classes = sorted(classes, key=lambda c: len(self.class_indices[c]))
         
         return classes
     
 class ControlledMetaTrainer:
-    def __init__(self, model, shots, n_ways, dataset_config, train_n_ways=None, device='cpu'):
+    def __init__(self, model, shots, n_ways, dataset_config, train_n_ways=None, device='cpu', metric_funcs=None):
         self.model = model
         self.device = device
 
@@ -129,8 +129,29 @@ class ControlledMetaTrainer:
         if self.train_n_ways is None:
             self.train_n_ways = n_ways
 
+        self.dataset_config = dataset_config
         self.initialise_datasets(dataset_config)
         self.initialise_dataloaders()
+        self.set_metric_funcs(metric_funcs)
+    
+    def set_metric_funcs(self, metric_funcs):
+        self.accuracy_func = multilabel_accuracy
+        self.auc_func = calculate_auc
+        if metric_funcs is not None:
+            if 'acc' in metric_funcs:
+                self.accuracy_func = metric_funcs['acc']
+            if 'auc' in metric_funcs:
+                self.auc_func = metric_funcs['auc']
+
+    def create_query_eval_dataloader(self, split_type='train'):
+        img_info = self.dataset_config.img_info
+        img_path = self.dataset_config.img_path
+        classes_split_map = self.dataset_config.classes_split_map
+        label_names_map = self.dataset_config.label_names_map
+        mean_std = self.dataset_config.mean_std
+
+        query_dataset = MDataset(img_path, img_info, self.query_image_ids, label_names_map, classes_split_map[split_type], mean_std=mean_std)
+        return _create_dataloader(query_dataset, self.shots, self.n_ways, include_query=True)
 
     def initialise_datasets(self, ds_config):
         img_info = ds_config.img_info
@@ -140,6 +161,7 @@ class ControlledMetaTrainer:
         mean_std = ds_config.mean_std
 
         query_image_ids, support_image_ids = get_query_and_support_ids(img_info, ds_config.training_split_path)
+        self.query_image_ids = query_image_ids
         self.train_query_dataset = MDataset(img_path, img_info, query_image_ids, label_names_map, classes_split_map['train'], mean_std=mean_std)
         self.train_support_dataset = MDataset(img_path, img_info, support_image_ids, label_names_map, classes_split_map['train'], mean_std=mean_std)
         
@@ -187,7 +209,7 @@ class ControlledMetaTrainer:
                 predictions = model.update_support_and_classify(train_class_labels, simages, sclass_inds, qimages)
                 loss = model.loss(predictions, qclass_inds)
 
-                acc = multilabel_accuracy(predictions, qclass_inds)
+                acc = self.accuracy_func(predictions, qclass_inds)
                 acc_meter.update(acc, qclass_inds.shape[0])
 
                 loss.backward()
@@ -230,12 +252,14 @@ class ControlledMetaTrainer:
 
                 loss_meter.update(loss.item(), shots)
 
-                auc = calculate_auc(predictions, qclass_inds)
+                auc = self.auc_func(predictions, qclass_inds)
                 auc_meter.update(auc, shots)
             
-                acc = multilabel_accuracy(predictions, qclass_inds)
+                acc = self.accuracy_func(predictions, qclass_inds)
                 acc_meter.update(acc, shots)
                 if verbose:
+                    # print(class_labels)
+                    # print(torch.nonzero(class_inds)[:,1].bincount())
                     print(f"Loss {loss} | Accuracy {acc} | AUC {auc}")
         return acc_meter.average(), auc_meter.average(), loss_meter.average()
     

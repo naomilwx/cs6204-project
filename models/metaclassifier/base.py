@@ -5,14 +5,17 @@ from abc import abstractmethod
 def euclidean_distance(prototype, query):
     # prototype: (L, D) | query: (N, L, D)
     prototype = prototype.unsqueeze(0).expand(query.shape[0], -1, -1)
+    # out: (N, L)
     return ((prototype-query)**2).sum(2)
     
 def cosine_distance(prototype, query):
+    # prototype: (L, D) | query: (N, L, D)
     prototype = prototype / prototype.norm(dim=-1, keepdim=True)
     prototype = prototype.unsqueeze(0).expand(query.shape[0], -1, -1)
+
     query = query / query.norm(dim=-1, keepdim=True)
-    cos = prototype * query
-    return -cos
+    cos = (prototype * query).sum(2)
+    return 1-cos
 
 class MetaModelBase(nn.Module):
     def __init__(self, imgtxt_encoder, class_prototype_aggregator):

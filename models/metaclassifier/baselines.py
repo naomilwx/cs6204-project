@@ -8,10 +8,10 @@ class ProtoNet(MetaModelBase):
         super(ProtoNet, self).__init__(imgtxt_encoder, class_prototype_aggregator)
         self.distance_func = distance_func
         self.scale = nn.Parameter(torch.tensor(scale))
-        self.set_trainable(trainable_base, trainable_base, include_text_bb=False, include_logit_scale=False)
+        self.set_trainable(trainable_base, include_logit_scale=False)
     
-    def set_trainable(self, trainable):
-        self.encoder.set_trainable(trainable, trainable, include_text_bb=False, include_logit_scale=False)
+    def set_trainable(self, trainable, include_logit_scale=False):
+        self.encoder.set_trainable(trainable, trainable, include_logit_scale=include_logit_scale)
 
     def forward(self, query_images):
         query_image_embeddings = self.encoder.embed_image(query_images, pool=True)

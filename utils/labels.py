@@ -69,12 +69,23 @@ MURED_LABELS = {
     'OTHER': 'other diseases'
 }
 
+# {'No finding': 12630, 'Other diseases': 3184, 'Aortic enlargement': 2249, 'Cardiomegaly': 1913, 'Pleural thickening': 1271, 'Pulmonary fibrosis': 991, 'Lung Opacity': 697, 'Other lesion': 572, 'Pneumonia': 604, 'Pleural effusion': 607, 'Tuberculosis': 429, 'Infiltration': 395, 'ILD': 349, 'Consolidation': 200}
 VINDR_SPLIT = {
     'train': [
         'No finding', 'Other diseases', 'Aortic enlargement', 'Cardiomegaly', 
         'Pleural thickening','Pulmonary fibrosis', 'Lung Opacity', 'Other lesion',
         'Pneumonia','Pleural effusion','Tuberculosis',
         'Infiltration','ILD','Consolidation'
+    ],
+    'train-subset': [
+        # 'No finding', 'Other diseases', 
+        'Aortic enlargement', 'Cardiomegaly', 
+        'Pleural thickening','Pulmonary fibrosis', 'Lung Opacity',
+        'Other lesion',
+        'Pneumonia',
+        # 'Pleural effusion','Tuberculosis',
+        # 'Infiltration',
+        # 'ILD','Consolidation'
     ],
     'test': [
         'Lung tumor','Nodule/Mass','Edema','Lung cyst',

@@ -58,7 +58,8 @@ class FewShotBatchSampler(Sampler):
                 
                 rem = set(self.class_indices[c]) - batch - selected
                 diff = min(len(rem), diff)
-                selected.update(np.random.choice(list(rem), diff, replace=False))
+                if diff > 0:
+                    selected.update(np.random.choice(list(rem), diff, replace=False))
 
                 if self.include_query:
                     num = len(selected)
