@@ -111,7 +111,7 @@ class ImageTextEmbedding(nn.Module):
             logits_per_image = logit_scale * torch.matmul(img_emb, text_emb.t())
         
         if len(img_emb.shape) == 4:
-            logits_per_text = logits_per_image.permute(0,1,3,2) # HxWxBxB
+            logits_per_text = logits_per_image.permute(0,1,3,2) # HxWxBxN
         else:
             logits_per_text = logits_per_image.t()
         return logits_per_text, logits_per_image

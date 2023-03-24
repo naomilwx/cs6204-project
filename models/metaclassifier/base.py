@@ -7,15 +7,20 @@ def euclidean_distance(prototype, query):
     prototype = prototype.unsqueeze(0).expand(query.shape[0], -1, -1)
     # out: (N, L)
     return ((prototype-query)**2).sum(2)
-    
-def cosine_distance(prototype, query):
+
+def cosine_similarity(prototype, query):
     # prototype: (L, D) | query: (N, L, D)
     prototype = prototype / prototype.norm(dim=-1, keepdim=True)
     prototype = prototype.unsqueeze(0).expand(query.shape[0], -1, -1)
 
     query = query / query.norm(dim=-1, keepdim=True)
     cos = (prototype * query).sum(2)
-    return 1-cos
+    return cos
+    
+def cosine_distance(prototype, query):
+    # prototype: (L, D) | query: (N, L, D)
+    # should return a value in [0, 2]
+    return 1 - cosine_similarity(prototype, query)
 
 class MetaModelBase(nn.Module):
     def __init__(self, imgtxt_encoder, class_prototype_aggregator):
@@ -26,7 +31,7 @@ class MetaModelBase(nn.Module):
     
     def set_class_prototype_details(self, class_labels, support_images, support_label_inds):
         image_embeddings = self.encoder.embed_image(support_images, pool=True) # (B, D)
-        image_embeddings = image_embeddings.unsqueeze(1).expand(-1, support_label_inds.shape[1], -1)
+        image_embeddings = image_embeddings.unsqueeze(1).repeat(1, support_label_inds.shape[1], 1)
 
         self.class_prototypes = self.class_prototype_aggregator(image_embeddings, support_label_inds)
     
@@ -36,7 +41,7 @@ class MetaModelBase(nn.Module):
     
     @abstractmethod
     def forward(self, query_images):
-        return query_images
+        return query_images, query_images
     
-    def loss(self, predictions, label_inds):
+    def loss(self, query_prototypes, predictions, label_inds):
         return self.loss_fn(predictions, label_inds.float())

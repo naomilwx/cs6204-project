@@ -1,6 +1,6 @@
 import torch
 import copy
-from utils.metrics import AverageMeter, calculate_auc, multilabel_accuracy
+from utils.metrics import AverageMeter, calculate_auc, multilabel_logit_accuracy
 from models.attention.model import image_text_logits
 
 class Trainer:
@@ -73,7 +73,7 @@ class Trainer:
                 auc = calculate_auc(logits_per_image, class_inds)
                 auc_meter.update(auc, len(class_inds))
             
-                acc = multilabel_accuracy(logits_per_image, class_inds)
+                acc = multilabel_logit_accuracy(logits_per_image, class_inds)
                 acc_meter.update(acc, len(class_inds))
 
         return acc_meter.average(), auc_meter.average(), loss_meter.average()

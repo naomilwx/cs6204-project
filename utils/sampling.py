@@ -11,6 +11,22 @@ def create_single_class_sampler(labels):
     samples_weight = np.array([class_counts[l] for l in labels])
     return WeightedRandomSampler(samples_weight, len(samples_weight))
 
+class ClassCycler:
+    def __init__(self, num_classes):
+        self.num_classes = num_classes
+        self.classes = []
+        self._update_class_list()
+    
+    def _update_class_list(self):
+        self.classes.extend(np.random.choice(self.num_classes, self.num_classes, replace=False))
+
+    def next_n(self, n):
+        if n > len(self.classes):
+            self._update_class_list()
+        out = self.classes[:n]
+        self.classes = self.classes[n:]
+        return out
+
 class FewShotBatchSampler(Sampler):
     def __init__(self, labels, k_shot, n_ways=None, include_query=False):
         self.labels = labels
@@ -24,36 +40,49 @@ class FewShotBatchSampler(Sampler):
         total_batches = 0
         for c in range(self.num_classes):
             indices = inds[class_indices == c]
-            np.random.shuffle(indices)
             self.class_indices[c] = indices
             total_batches += int(np.ceil(len(indices) / k_shot))
         self.iterations = total_batches // self.n_ways # Average batches per class
         self.include_query = include_query
+        self.cycler = None
+        self.n_query = self.shots
+
+    def set_query_size(self, size):
+        self.n_query = size
 
     def get_iteration_classes(self, iter):
         if self.num_classes == self.n_ways:
             classes = np.arange(self.num_classes)
         else:
-            classes = self.class_choices[iter * self.n_ways : (iter + 1) * self.n_ways]
-        classes = sorted(classes , key=lambda c: len(self.class_indices[c]))
+            if self.cycler is None:
+                self.cycler = ClassCycler(self.num_classes)
+            classes = self.cycler.next_n(self.n_ways)
         return classes
     
-    def generate_batches(self):
+    def generate_batches(self, size):
         class_indices = copy.copy(self.class_indices)
-        shots = self.shots * 2 if self.include_query else self.shots
+        for c in range(self.num_classes):
+            np.random.shuffle(class_indices[c])
+
+        if self.include_query:
+            all_indices = set([ind for l in class_indices.values() for ind in l])
+    
         for it in range(self.iterations):
             batch = set()
+
             if self.include_query:
                 query_list = []
                 support_list = []
+
             self.curr_classes = self.get_iteration_classes(it)
-            for c in self.curr_classes:
+            curr_classes = sorted(self.curr_classes , key=lambda c: len(self.class_indices[c]))
+            for c in curr_classes:
                 indices = class_indices[c]
-                diff = shots
+                diff = size
                 selected = set()
                 if len(indices) > 0:
-                    selected = set(indices[:shots]) - batch
-                    class_indices[c] = indices[shots:]
+                    selected = set(indices[:size]) - batch
+                    class_indices[c] = indices[size:]
                     diff -= len(selected)
                 
                 rem = set(self.class_indices[c]) - batch - selected
@@ -61,26 +90,32 @@ class FewShotBatchSampler(Sampler):
                 if diff > 0:
                     selected.update(np.random.choice(list(rem), diff, replace=False))
 
+                batch.update(selected)
                 if self.include_query:
-                    num = len(selected)
-                    if num % 2 == 1:
-                        num -= 1
-                        selected.pop()
-                    batch.update(selected)
-                    support_list.extend([selected.pop() for _ in range(num//2)])
+                    support_list.extend([selected.pop() for _ in range(self.shots)])
                     query_list.extend(selected)
-                else:
-                    batch.update(selected)
+            
             if self.include_query:
+                size_support = self.n_ways * self.shots
+                if len(support_list) < size_support:
+                    selected = np.random.choice(list(all_indices - batch), size_support - len(support_list), replace=False)
+                    support_list.extend(selected)
+                    batch.update(selected)
+
+                size_query  =  self.n_ways * self.n_query
+                if len(query_list) < size_query:
+                    selected = np.random.choice(list(all_indices - batch), size_query - len(query_list), replace=False)
+                    support_list.extend(selected)
+                    batch.update(selected)
                 yield(support_list+query_list)
             else:
                 yield list(batch)
             
     def __iter__(self):
-        if self.num_classes != self.n_ways:
-            self.class_choices = np.concatenate([np.random.choice(self.num_classes, self.num_classes, replace=False) for i in range(int(np.ceil(self.n_ways * self.iterations / self.num_classes)))])
-        
-        return self.generate_batches()
+        size = self.shots 
+        if self.include_query:
+            size += self.n_query
+        return self.generate_batches(size)
     
     def __len__(self):
         return self.iterations

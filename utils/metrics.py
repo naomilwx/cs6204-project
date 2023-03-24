@@ -30,7 +30,7 @@ def accuracy(output, target, topk=(1,)):
     correct = pred.eq(target.reshape(1, -1).expand_as(pred))
     return [correct[:min(k, maxk)].reshape(-1).float().sum(0) / batch_size for k in topk]
 
-def multilabel_accuracy(output, target):
+def multilabel_logit_accuracy(output, target):
     # Returns the average accuracy across classes    
     # Target is 1 at indices where class label is true
     # Output should be higher at indices where class label is true

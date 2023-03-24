@@ -69,7 +69,6 @@ MURED_LABELS = {
     'OTHER': 'other diseases'
 }
 
-# {'No finding': 12630, 'Other diseases': 3184, 'Aortic enlargement': 2249, 'Cardiomegaly': 1913, 'Pleural thickening': 1271, 'Pulmonary fibrosis': 991, 'Lung Opacity': 697, 'Other lesion': 572, 'Pneumonia': 604, 'Pleural effusion': 607, 'Tuberculosis': 429, 'Infiltration': 395, 'ILD': 349, 'Consolidation': 200}
 VINDR_SPLIT = {
     'train': [
         'No finding', 'Other diseases', 'Aortic enlargement', 'Cardiomegaly', 
@@ -96,6 +95,52 @@ VINDR_SPLIT = {
         'Enlarged PA', 'Atelectasis', 'Calcification'
     ]
 }
+
+# VINDR_SPLIT2 = {
+#     'train': [
+#         'No finding', 'Other diseases','Pneumonia',
+#         'Aortic enlargement', 'Cardiomegaly', 
+#         'Pleural thickening','Pulmonary fibrosis', 'Lung Opacity', 'Other lesion',
+#         'Pleural effusion'
+#     ],
+#     'test': [
+#         'Lung tumor',
+#         'Nodule/Mass','Lung cavity',
+#         'Rib fracture',
+#         'Consolidation','ILD','Infiltration'
+#         # 'Edema','Lung cyst','Clavicle fracture',
+#     ],
+#     'val': [
+#         # 'COPD',
+#         'Tuberculosis',
+#         'Pneumothorax','Mediastinal shift', 'Emphysema',
+#         'Enlarged PA', 'Atelectasis', 'Calcification', 
+#     ]
+# }
+VINDR_SPLIT2 = {
+    'train': [
+        'No finding', 'Other diseases','Pneumonia',
+        'Aortic enlargement', 'Cardiomegaly', 
+        'Pleural thickening','Pulmonary fibrosis', 'Lung Opacity', 'Other lesion',
+        'Pleural effusion'
+    ],
+    'test': [
+        'Lung tumor',
+        'Nodule/Mass','Lung cavity',
+        'Rib fracture',
+        'ILD','Infiltration',
+        'Mediastinal shift',
+        # 'Edema','Lung cyst','Clavicle fracture',
+    ],
+    'val': [
+        # 'COPD',
+        'Tuberculosis',
+        'Pneumothorax', 'Emphysema',
+        'Enlarged PA', 'Atelectasis', 'Calcification', 
+        'Consolidation',
+    ]
+}
+
 
 MURED_SPLIT = {
     'train': [

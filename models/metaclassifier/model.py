@@ -11,14 +11,28 @@ class MetaModelWithAttention(MetaModelBase):
         self.use_variance = use_variance
         self.freeze_child_models()
 
+    def loss(self, query_prototypes, predictions, label_inds):
+        attn_loss = 0
+        if self.attention_loss_weight != 0:
+            attn_loss = self.attn_model.loss(self.class_label_embeddings, query_prototypes, label_inds)
+        return super().loss(query_prototypes, predictions, label_inds) + self.attention_loss_weight * attn_loss
+
     def freeze_child_models(self):
         self.encoder.set_trainable(False, False, include_text_bb=False, include_logit_scale=False)
-        self.attn_model.set_trainable(False)
+        self.set_attention_model_trainable(False)
 
+    def set_attention_model_trainable(self, trainable, weight = 0.5):
+        self.attn_model.set_trainable(trainable)
+        if trainable:
+            self.attention_loss_weight = weight
+        else:
+            self.attention_loss_weight = 0
+    
     def set_class_prototype_details(self, class_labels, support_images, support_label_inds):
         text_embeddings, image_embeddings = self.encoder(class_labels, support_images, pool=False)
-        self.class_label_embeddings = text_embeddings
         support_prototypes = self.attn_model(text_embeddings, image_embeddings, support_label_inds)
+        
+        self.class_label_embeddings = text_embeddings
         self.class_prototypes = self.class_prototype_aggregator(support_prototypes, support_label_inds)
         if self.use_variance:
             self.class_prototypes_var = class_variance(support_prototypes, support_label_inds)
@@ -54,16 +68,22 @@ class ClsModel(MetaModelWithAttention):
             out = self.cls(torch.cat((class_prototypes, class_prototypes_var, query_prototypes), dim=2))
         else:
             out = self.cls(torch.cat((class_prototypes, query_prototypes), dim=2))
-        return out.squeeze(2) # NxLx1 -> NxL
+        return out.squeeze(2), query_prototypes # NxLx1 -> NxL
     
 class ProtoNetAttention(MetaModelWithAttention):
     def __init__(self, imgtxt_encoder, attn_model, class_prototype_aggregator, distance_func, scale=1.0):
         super(ProtoNetAttention, self).__init__(imgtxt_encoder, attn_model, class_prototype_aggregator)
         self.distance_func = distance_func
         self.scale = nn.Parameter(torch.tensor(scale))
+        self.loss = nn.BCELoss()
+
+    def get_scale(self):
+        self.scale.data = torch.clamp(self.scale.data, 0)
+        return self.scale
 
     def forward(self, query_images):
         query_image_embeddings = self.encoder.embed_image(query_images, pool=False)
         query_prototypes = self.attn_model(self.class_label_embeddings, query_image_embeddings)
+        probabilities = (-self.distance_func(self.class_prototypes, query_prototypes) * self.get_scale()).exp()
 
-        return -self.distance_func(self.class_prototypes, query_prototypes) * self.scale
+        return probabilities, query_prototypes

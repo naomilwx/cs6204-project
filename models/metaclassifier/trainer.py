@@ -8,10 +8,12 @@ import copy
 from skimage import io
 import torchvision.transforms as transforms
 
-from utils.metrics import AverageMeter, calculate_auc, multilabel_accuracy
-from utils.sampling import FewShotBatchSampler
+from utils.metrics import AverageMeter, calculate_auc
+from utils.sampling import FewShotBatchSampler, ClassCycler
 from utils.image import CenterRatioCrop
 from utils.data import get_query_and_support_ids
+
+from torchmetrics.classification import MultilabelRecall, MultilabelSpecificity, MultilabelAccuracy
 
 class DataloaderIterator:
     def __init__(self, dataloader):
@@ -76,28 +78,13 @@ class MDataset(Dataset):
 
     def __len__(self):
         return len(self.image_ids)
-
-class ClassCycler:
-    def __init__(self, num_classes):
-        self.num_classes = num_classes
-        self.classes = []
-        self._update_class_list()
-    
-    def _update_class_list(self):
-        self.classes.extend(np.random.choice(self.num_classes, self.num_classes, replace=False))
-
-    def next_n(self, n):
-        if n > len(self.classes):
-            self._update_class_list()
-        out = self.classes[:n]
-        self.classes = self.classes[n:]
-        return out
     
 class ControlledFewShotBatchSampler(FewShotBatchSampler):
-    def __init__(self, labels, k_shot, n_ways=None, include_query=False):
+    def __init__(self, labels, k_shot, n_ways=None, include_query=False, n_query=None):
         super(ControlledFewShotBatchSampler, self).__init__(labels, k_shot, n_ways=n_ways, include_query=include_query)
         self.sample_classes = None
-        self.cycler = None
+        if n_query is not None:
+            self.set_query_size(n_query)
 
     def reset_sample_classes(self):
         self.sample_classes = None
@@ -105,26 +92,22 @@ class ControlledFewShotBatchSampler(FewShotBatchSampler):
     def set_sample_classes(self, classes):
         self.sample_classes = classes
     
-    def get_iteration_classes(self, _):
+    def get_iteration_classes(self, it):
         if self.sample_classes is not None:
-            classes = self.sample_classes
+            return self.sample_classes
         else:
-            if self.cycler is None:
-                self.cycler = ClassCycler(self.num_classes)
-            classes = self.cycler.next_n(self.n_ways)
-        
-        if self.include_query:
-            classes = sorted(classes, key=lambda c: len(self.class_indices[c]))
-        
-        return classes
+            return super().get_iteration_classes(it)
     
 class ControlledMetaTrainer:
-    def __init__(self, model, shots, n_ways, dataset_config, train_n_ways=None, device='cpu', metric_funcs=None):
+    def __init__(self, model, shots, n_ways, dataset_config, train_n_ways=None, n_query=None, device='cpu', metric_funcs=None):
         self.model = model
         self.device = device
 
         self.shots = shots
         self.n_ways = n_ways
+        self.n_query = shots
+        if n_query is not None:
+            self.n_query = n_query
         self.train_n_ways = train_n_ways
         if self.train_n_ways is None:
             self.train_n_ways = n_ways
@@ -132,17 +115,7 @@ class ControlledMetaTrainer:
         self.dataset_config = dataset_config
         self.initialise_datasets(dataset_config)
         self.initialise_dataloaders()
-        self.set_metric_funcs(metric_funcs)
     
-    def set_metric_funcs(self, metric_funcs):
-        self.accuracy_func = multilabel_accuracy
-        self.auc_func = calculate_auc
-        if metric_funcs is not None:
-            if 'acc' in metric_funcs:
-                self.accuracy_func = metric_funcs['acc']
-            if 'auc' in metric_funcs:
-                self.auc_func = metric_funcs['auc']
-
     def create_query_eval_dataloader(self, split_type='train'):
         img_info = self.dataset_config.img_info
         img_path = self.dataset_config.img_path
@@ -151,7 +124,7 @@ class ControlledMetaTrainer:
         mean_std = self.dataset_config.mean_std
 
         query_dataset = MDataset(img_path, img_info, self.query_image_ids, label_names_map, classes_split_map[split_type], mean_std=mean_std)
-        return _create_dataloader(query_dataset, self.shots, self.n_ways, include_query=True)
+        return _create_dataloader(query_dataset, self.shots, self.n_ways, n_query=self.n_query)
 
     def initialise_datasets(self, ds_config):
         img_info = ds_config.img_info
@@ -169,11 +142,11 @@ class ControlledMetaTrainer:
         self.test_dataset = _create_dataset(img_path, img_info, label_names_map, classes_split_map, 'test', mean_std)
 
     def initialise_dataloaders(self):
-        self.train_query_loader = _create_dataloader(self.train_query_dataset, self.shots, self.train_n_ways, include_query=False)
-        self.train_support_loader = _create_dataloader(self.train_support_dataset, self.shots, self.train_n_ways, include_query=False)
+        self.train_query_loader = _create_dataloader(self.train_query_dataset, self.n_query, self.train_n_ways, n_query=0)
+        self.train_support_loader = _create_dataloader(self.train_support_dataset, self.shots, self.train_n_ways, n_query=0)
 
-        self.val_loader = _create_dataloader(self.val_dataset, self.shots, self.n_ways, include_query=True)
-        self.test_loader = _create_dataloader(self.test_dataset, self.shots, self.n_ways, include_query=True)
+        self.val_loader = _create_dataloader(self.val_dataset, self.shots, self.n_ways, n_query=self.n_query)
+        self.test_loader = _create_dataloader(self.test_dataset, self.shots, self.n_ways, n_query=self.n_query)
 
     def _update_train_iteration_classes(self, classes):
         self.train_query_dataset.sampler.set_sample_classes(classes)
@@ -183,12 +156,15 @@ class ControlledMetaTrainer:
         self.train_query_dataset.sampler.reset_sample_classes()
         self.train_support_dataset.sampler.reset_sample_classes()
         
-    def run_train(self, epochs, lr=1e-5):
+    def run_train(self, epochs, lr=1e-5, min_lr=5e-7):
         model = self.model.to(self.device)
         best_epoch = None
         best_acc = None
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
         
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+        scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=min_lr, max_lr=lr, cycle_momentum=False, step_size_up=10)
+
+        accuracy_func = MultilabelAccuracy(num_labels=self.train_n_ways).to(self.device)
         cycler = ClassCycler(len(self.train_query_dataset.classes))
         support_iterator = DataloaderIterator(self.train_support_loader)
         for epoch in range(epochs):
@@ -206,21 +182,22 @@ class ControlledMetaTrainer:
                 simages, sclass_inds = simages.to(self.device), sclass_inds.to(self.device)
 
                 optimizer.zero_grad()
-                predictions = model.update_support_and_classify(train_class_labels, simages, sclass_inds, qimages)
-                loss = model.loss(predictions, qclass_inds)
+                predictions, query_proto = model.update_support_and_classify(train_class_labels, simages, sclass_inds, qimages)
+                loss = model.loss(query_proto, predictions, qclass_inds)
 
-                acc = self.accuracy_func(predictions, qclass_inds)
+                acc = accuracy_func(predictions, qclass_inds)
                 acc_meter.update(acc, qclass_inds.shape[0])
 
                 loss.backward()
                 optimizer.step()
+                scheduler.step()
 
                 loss_meter.update(loss.item(), len(qimages))
                 print(f"Batch {i+1}: loss {loss_meter.average()} | Acc {acc}")
             
             print(f"Epoch {epoch+1}: Training loss {loss_meter.average()} | Acc: {acc_meter.average()}")
 
-            val_acc, val_auc, val_loss = self.run_eval(model, self.val_loader)
+            val_acc, val_auc, val_loss = self.run_eval(model, self.val_loader, n_ways=self.train_n_ways)
             print(f"Epoch {epoch+1}: Validation loss {val_loss} | Accuracy {val_acc} | AUC {val_auc}")
 
             self._reset_train_iteration_classes()
@@ -232,7 +209,7 @@ class ControlledMetaTrainer:
         self.model = model
         print('Best epoch: ', best_epoch+1)
     
-    def run_eval(self, model, dataloader, verbose=False):
+    def run_eval(self, model, dataloader, verbose=False, additional_stats=False, n_ways=None):
         model.eval()
         model = model.to(self.device)
         
@@ -240,27 +217,49 @@ class ControlledMetaTrainer:
         auc_meter = AverageMeter()
         acc_meter = AverageMeter()
 
+        if n_ways is None:
+            n_ways = self.n_ways
+
+        accuracy_func = MultilabelAccuracy(num_labels=n_ways).to(self.device)
+        if additional_stats:
+            specificity_func = MultilabelSpecificity(num_labels=n_ways).to(self.device)
+            spec_meter = AverageMeter()
+            recall_func = MultilabelRecall(num_labels=n_ways).to(self.device)
+            rec_meter = AverageMeter()
+
         with torch.no_grad():
             for images, class_inds, class_labels in dataloader:
-                images, class_inds = images.to(self.device), class_inds.to(self.device)
-                shots = images.shape[0]//2
-                qimages, simages = images[:shots,:,:], images[shots:,:,:]
-                qclass_inds, sclass_inds = class_inds[:shots,:], class_inds[shots:,:]
+                s_size = self.shots * n_ways
+                simages, qimages = images[:s_size,:,:].to(self.device), images[s_size:,:,:].to(self.device)
+                sclass_inds, qclass_inds = class_inds[:s_size,:].to(self.device), class_inds[s_size:,:].to(self.device)
 
-                predictions = model.update_support_and_classify(class_labels, simages, sclass_inds, qimages)
-                loss = model.loss(predictions, qclass_inds)
+                predictions, query_proto = model.update_support_and_classify(class_labels, simages, sclass_inds, qimages)
 
-                loss_meter.update(loss.item(), shots)
+                loss = model.loss(query_proto, predictions, qclass_inds)
+                loss_meter.update(loss.item(), qclass_inds.shape[0])
 
-                auc = self.auc_func(predictions, qclass_inds)
-                auc_meter.update(auc, shots)
+                auc = calculate_auc(predictions, qclass_inds)
+                auc_meter.update(auc, qclass_inds.shape[0])
             
-                acc = self.accuracy_func(predictions, qclass_inds)
-                acc_meter.update(acc, shots)
+                acc = accuracy_func(predictions, qclass_inds)
+                acc_meter.update(acc.item(), qclass_inds.shape[0])
+
+                if additional_stats:
+                    spec = specificity_func(predictions, qclass_inds)
+                    spec_meter.update(spec.item(), qclass_inds.shape[0])
+                    rec = recall_func(predictions, qclass_inds)
+                    rec_meter.update(rec.item(), qclass_inds.shape[0])
+
                 if verbose:
                     # print(class_labels)
                     # print(torch.nonzero(class_inds)[:,1].bincount())
-                    print(f"Loss {loss} | Accuracy {acc} | AUC {auc}")
+                    # print(predictions)
+                    if additional_stats:
+                        print(f"Loss {loss} | Accuracy {acc} | AUC {auc} | Specificity {spec} | Recall {rec}")
+                    else:
+                        print(f"Loss {loss} | Accuracy {acc} | AUC {auc}")
+        if additional_stats:
+            return acc_meter.average(), auc_meter.average(), loss_meter.average(), spec_meter.average(), rec_meter.average()
         return acc_meter.average(), auc_meter.average(), loss_meter.average()
     
 def _collate_batch(batch):
@@ -280,9 +279,9 @@ def _create_dataset(img_path, img_info, label_names_map, classes_split_map, spli
     img_ids = img_info[img_info['meta_split'] == split]['image_id'].to_list()
     return MDataset(img_path, img_info, img_ids, label_names_map, classes_split_map[split], mean_std=mean_std)
 
-def _create_dataloader(dataset, shots, n_ways, include_query):
+def _create_dataloader(dataset, shots, n_ways, n_query):
     if dataset.sampler is None:
-        sampler = ControlledFewShotBatchSampler(dataset.get_class_indicators(), shots, n_ways=n_ways, include_query=include_query)
+        sampler = ControlledFewShotBatchSampler(dataset.get_class_indicators(), shots, n_ways=n_ways, include_query=n_query!=0, n_query=n_query)
         dataset.sampler = sampler
     return DataLoader(dataset, batch_sampler=dataset.sampler, collate_fn=_collate_batch)
 

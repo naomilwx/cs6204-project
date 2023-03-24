@@ -33,7 +33,7 @@ def get_query_and_support_ids(img_info, split_file, split='train'):
     return query_image_ids, support_image_ids
 
 class DatasetConfig:
-    def __init__(self, img_path, info_path, training_split_path, label_names_map, classes_split_map, mean_std):
+    def __init__(self, img_path, info_path, training_split_path, label_names_map, classes_split_map, mean_std=None):
         self.img_info = pd.read_pickle(info_path)
         self.img_path = img_path
         self.training_split_path = training_split_path

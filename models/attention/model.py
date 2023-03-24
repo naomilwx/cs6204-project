@@ -20,10 +20,10 @@ class LabelImageAttention(nn.Module):
         for param in self.attn.parameters():
             param.requires_grad = trainable
 
-    def forward(self, texts, images, label_inds=None):
+    def forward(self, text_embeddings, images, label_inds=None):
         # transformer: (N, S, E), (N, T, E) -> (N, T, E)
         # texts: (L,D) , images: (N,D,H,W), label_inds: (N, L)
-        texts = texts.repeat(images.shape[0], 1, 1)
+        text_embeddings = text_embeddings.repeat(images.shape[0], 1, 1)
         images = images.flatten(start_dim=2).permute(0, 2, 1)
         mask = None
         if label_inds is not None:
@@ -33,8 +33,12 @@ class LabelImageAttention(nn.Module):
         # Mask irrelevant labels with tgt_key_padding_mask, set masked positions to True
         # Images: Nx(HxW)xD
         # Output: (N, L, D)
-        out = self.attn(images, texts, tgt_key_padding_mask=mask)
+        out = self.attn(images, text_embeddings, tgt_key_padding_mask=mask)
         return out / out.norm(dim=-1, keepdim=True)
+
+    def image_text_logits(self, text_embedings, images, label_inds=None):
+        prototypes = self.forward(text_embedings, images, label_inds)
+        return image_text_logits(text_embedings, prototypes)
     
     def loss(self, text_embeddings, prototypes, label_inds):
         logits = image_text_logits(text_embeddings, prototypes)
