@@ -39,15 +39,16 @@ class F1Loss(nn.Module):
         f1 = 2* (precision*recall) / (precision + recall + self.epsilon)
         f1 = f1.clamp(min=self.epsilon, max=1-self.epsilon)
 
-        spec = tn/(tn+fp+self.epsilon)
+        spec = tn/ (tn + fp + self.epsilon)
         return 1-f1.mean() + self.spec_weight*(1-spec.mean())
     
 
 class BalAccuracyLoss(nn.Module):
-    def __init__(self, epsilon=1e-7, logits=True):
+    def __init__(self, epsilon=1e-7, logits=True, harmonic_mean=True):
         super().__init__()
         self.epsilon = epsilon
         self.logits = logits
+        self.harmonic_mean = harmonic_mean
         
     def forward(self, y_pred, y_true):
         assert y_pred.ndim == 2
@@ -61,6 +62,12 @@ class BalAccuracyLoss(nn.Module):
         fn = (y_true * (1 - y_pred)).sum(dim=0).to(torch.float32)
 
         recall = tp / (tp + fn + self.epsilon)
+        spec = tn/ (tn + fp + self.epsilon)
 
-        spec = tn/(tn+fp+self.epsilon)
-        return 1 - (recall.mean() + spec.mean())/2
+        if self.harmonic_mean:
+            acc = 2*(recall*spec)/(recall+spec+self.epsilon)
+        else:
+            acc = (recall + spec)/2
+        acc = acc.clamp(min=self.epsilon, max=1-self.epsilon)
+
+        return 1 - acc.mean()

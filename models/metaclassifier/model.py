@@ -3,7 +3,7 @@ from torch import nn
 
 from models.metaclassifier.base import MetaModelBase
 from utils.prototype import class_variance
-from utils.f1_loss import F1Loss
+from utils.f1_loss import BalAccuracyLoss
 
 class MetaModelWithAttention(MetaModelBase):
     def __init__(self, imgtxt_encoder, attn_model, class_prototype_aggregator, use_variance=False):
@@ -76,7 +76,7 @@ class ProtoNetAttention(MetaModelWithAttention):
         super(ProtoNetAttention, self).__init__(imgtxt_encoder, attn_model, class_prototype_aggregator)
         self.distance_func = distance_func
         self.scale = nn.Parameter(torch.tensor(scale))
-        self.loss_fn = F1Loss(logits=False)
+        self.loss_fn = BalAccuracyLoss(logits=False)
 
     def get_scale(self):
         self.scale.data = torch.clamp(self.scale.data, 1e-5)

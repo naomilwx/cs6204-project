@@ -13,7 +13,7 @@ from utils.sampling import FewShotBatchSampler, ClassCycler
 from utils.image import CenterRatioCrop
 from utils.data import get_query_and_support_ids
 
-from torchmetrics.classification import MultilabelRecall, MultilabelSpecificity, MultilabelAccuracy, MultilabelF1Score
+from torchmetrics.classification import MultilabelRecall, MultilabelSpecificity, MultilabelF1Score
 
 class DataloaderIterator:
     def __init__(self, dataloader):
@@ -99,7 +99,7 @@ class ControlledFewShotBatchSampler(FewShotBatchSampler):
             return super().get_iteration_classes(it)
     
 class ControlledMetaTrainer:
-    def __init__(self, model, shots, n_ways, dataset_config, train_n_ways=None, n_query=None, device='cpu', use_f1_accuracy=True):
+    def __init__(self, model, shots, n_ways, dataset_config, train_n_ways=None, n_query=None, device='cpu'):
         self.model = model
         self.device = device
 
@@ -115,7 +115,6 @@ class ControlledMetaTrainer:
         self.dataset_config = dataset_config
         self.initialise_datasets(dataset_config)
         self.initialise_dataloaders()
-        self.use_f1 = use_f1_accuracy
 
     
     def create_query_eval_dataloader(self, split_type='train'):
@@ -158,12 +157,6 @@ class ControlledMetaTrainer:
         self.train_query_dataset.sampler.reset_sample_classes()
         self.train_support_dataset.sampler.reset_sample_classes()
 
-    def accuracy_func(self, num_clases):
-        if self.use_f1:
-            return MultilabelF1Score(num_labels=num_clases).to(self.device)
-        else:
-            return MultilabelAccuracy(num_labels=num_clases).to(self.device)
-        
     def run_train(self, epochs, lr=1e-5, min_lr=5e-7, lr_change_step=5):
         model = self.model.to(self.device)
         best_epoch = None
@@ -172,14 +165,14 @@ class ControlledMetaTrainer:
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
         scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=min_lr, max_lr=lr, cycle_momentum=False, step_size_up=lr_change_step)
 
-        accuracy_func = self.accuracy_func(self.train_n_ways)
+        f1_func = MultilabelF1Score(num_labels=self.train_n_ways).to(self.device)
 
         cycler = ClassCycler(len(self.train_query_dataset.classes))
         support_iterator = DataloaderIterator(self.train_support_loader)
         for epoch in range(epochs):
             model.train()
             loss_meter = AverageMeter()
-            acc_meter = AverageMeter()
+            f1_meter = AverageMeter()
             query_iterator = DataloaderIterator(self.train_query_loader)
             for i in range(len(self.train_query_loader)):
                 self._update_train_iteration_classes(cycler.next_n(self.train_n_ways))
@@ -194,20 +187,20 @@ class ControlledMetaTrainer:
                 predictions, query_proto = model.update_support_and_classify(train_class_labels, simages, sclass_inds, qimages)
                 loss = model.loss(query_proto, predictions, qclass_inds)
 
-                acc = accuracy_func(predictions, qclass_inds)
-                acc_meter.update(acc, qclass_inds.shape[0])
+                f1 = f1_func(predictions, qclass_inds)
+                f1_meter.update(f1, qclass_inds.shape[0])
 
                 loss.backward()
                 optimizer.step()
                 scheduler.step()
 
                 loss_meter.update(loss.item(), len(qimages))
-                print(f"Batch {i+1}: loss {loss_meter.average()} | Acc {acc}")
+                print(f"Batch {i+1}: loss {loss_meter.average()} | F1 {f1}")
             
-            print(f"Epoch {epoch+1}: Training loss {loss_meter.average()} | Acc: {acc_meter.average()}")
-
-            val_acc, val_auc, val_loss = self.run_eval(model, self.val_loader, n_ways=self.train_n_ways)
-            print(f"Epoch {epoch+1}: Validation loss {val_loss} | Accuracy {val_acc} | AUC {val_auc}")
+            print(f"Epoch {epoch+1}: Training loss {loss_meter.average()} | F1: {f1_meter.average()}")
+            val_loss, val_f1, val_auc, val_spec, val_rec = self.run_eval(model, self.val_loader, n_ways=self.train_n_ways)
+            val_acc = 2 * (val_spec * val_rec) /(val_spec + val_rec)
+            print(f"Epoch {epoch+1}: Validation loss {val_loss} | F1 {val_f1}| Accuracy H-Mean {val_acc} | AUC {val_auc}")
 
             self._reset_train_iteration_classes()
 
@@ -218,24 +211,22 @@ class ControlledMetaTrainer:
         self.model = model
         print('Best epoch: ', best_epoch+1)
     
-    def run_eval(self, model, dataloader, verbose=False, additional_stats=False, n_ways=None):
+    def run_eval(self, model, dataloader, verbose=False, n_ways=None):
         model.eval()
         model = model.to(self.device)
         
         loss_meter = AverageMeter()
         auc_meter = AverageMeter()
-        acc_meter = AverageMeter()
+        f1_meter = AverageMeter()
+        spec_meter = AverageMeter()
+        rec_meter = AverageMeter()
 
         if n_ways is None:
             n_ways = self.n_ways
-
-        accuracy_func = self.accuracy_func(n_ways)
         
-        if additional_stats:
-            specificity_func = MultilabelSpecificity(num_labels=n_ways).to(self.device)
-            spec_meter = AverageMeter()
-            recall_func = MultilabelRecall(num_labels=n_ways).to(self.device)
-            rec_meter = AverageMeter()
+        f1_func = MultilabelF1Score(num_labels=n_ways).to(self.device)
+        specificity_func = MultilabelSpecificity(num_labels=n_ways).to(self.device)
+        recall_func = MultilabelRecall(num_labels=n_ways).to(self.device)
 
         with torch.no_grad():
             for images, class_inds, class_labels in dataloader:
@@ -251,26 +242,20 @@ class ControlledMetaTrainer:
                 auc = calculate_auc(predictions, qclass_inds)
                 auc_meter.update(auc, qclass_inds.shape[0])
             
-                acc = accuracy_func(predictions, qclass_inds)
-                acc_meter.update(acc.item(), qclass_inds.shape[0])
+                f1 = f1_func(predictions, qclass_inds)
+                f1_meter.update(f1.item(), qclass_inds.shape[0])
 
-                if additional_stats:
-                    spec = specificity_func(predictions, qclass_inds)
-                    spec_meter.update(spec.item(), qclass_inds.shape[0])
-                    rec = recall_func(predictions, qclass_inds)
-                    rec_meter.update(rec.item(), qclass_inds.shape[0])
+                spec = specificity_func(predictions, qclass_inds)
+                spec_meter.update(spec.item(), qclass_inds.shape[0])
+                rec = recall_func(predictions, qclass_inds)
+                rec_meter.update(rec.item(), qclass_inds.shape[0])
 
                 if verbose:
                     # print(class_labels)
                     # print(torch.nonzero(class_inds)[:,1].bincount())
                     # print(predictions)
-                    if additional_stats:
-                        print(f"Loss {loss} | Accuracy {acc} | AUC {auc} | Specificity {spec} | Recall {rec}")
-                    else:
-                        print(f"Loss {loss} | Accuracy {acc} | AUC {auc}")
-        if additional_stats:
-            return acc_meter.average(), auc_meter.average(), loss_meter.average(), spec_meter.average(), rec_meter.average()
-        return acc_meter.average(), auc_meter.average(), loss_meter.average()
+                    print(f"Loss {loss} | F1 {f1} | AUC {auc} | Specificity {spec} | Recall {rec} | Bal Acc {(spec+rec)/2}")
+        return loss_meter.average(), f1_meter.average(), auc_meter.average(), spec_meter.average(), rec_meter.average()
     
 def _collate_batch(batch):
     images, class_inds, labels = [], [], []

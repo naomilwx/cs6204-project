@@ -2,14 +2,14 @@ import torch
 from torch import nn
 
 from models.metaclassifier.base import MetaModelBase
-from utils.f1_loss import F1Loss
+from utils.f1_loss import BalAccuracyLoss
 
 class ProtoNet(MetaModelBase):
     def __init__(self, imgtxt_encoder, class_prototype_aggregator, distance_func, scale=1.0, trainable_base=True):
         super(ProtoNet, self).__init__(imgtxt_encoder, class_prototype_aggregator)
         self.distance_func = distance_func
         self.scale = nn.Parameter(torch.tensor(scale))
-        self.loss_fn = F1Loss(logits=False)
+        self.loss_fn = BalAccuracyLoss(logits=False)
         self.set_trainable(trainable_base, include_logit_scale=False)
     
     def set_trainable(self, trainable, include_logit_scale=False):

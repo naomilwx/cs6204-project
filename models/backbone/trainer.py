@@ -9,8 +9,8 @@ from medmnist import Evaluator
 from medmnist.evaluator import getACC, getAUC
 
 from utils.sampling import MultilabelBalancedRandomSampler, create_single_class_sampler
-from utils.metrics import AverageMeter, calculate_auc, multilabel_logit_accuracy
-from torchmetrics.classification import MultilabelRecall, MultilabelSpecificity
+from utils.metrics import AverageMeter, calculate_auc
+from torchmetrics.classification import MultilabelRecall, MultilabelSpecificity, MultilabelF1Score
 
 class Trainer:
   def __init__(self, model, datasets, batch_size, device='cpu', balance=False):
@@ -110,16 +110,16 @@ class Trainer:
       return acc, auc, avg_loss
 
 class DSTrainer:
-    def __init__(self, model, class_labels, device='cpu'):
+    def __init__(self, model, class_labels, criterion=nn.BCEWithLogitsLoss(), device='cpu'):
         self.model = model
         self.device = device
         self.class_labels = class_labels
+        self.criterion = criterion
     
     def run_train(self, epochs, dataloader, val_dataloader, lr=1e-4, min_lr=1e-6, weight_decay=1e-5):
         model = self.model.to(self.device)
         best_epoch = None
         best_acc = None
-        criterion = nn.BCEWithLogitsLoss()
         optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
         scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=min_lr, max_lr=lr, cycle_momentum=False, step_size_up=10)
         for epoch in range(epochs):
@@ -130,7 +130,7 @@ class DSTrainer:
                 optimizer.zero_grad()
 
                 predictions = model(images)
-                loss = criterion(predictions, class_inds.float())
+                loss = self.criterion(predictions, class_inds.float())
                 loss.backward()
                 optimizer.step()
                 scheduler.step()
@@ -139,8 +139,9 @@ class DSTrainer:
                 print(f"Batch {i+1}: loss {loss_meter.average()}")
             
             print(f"Epoch {epoch+1}: Training loss {loss_meter.average()}")
-            val_acc, val_auc, val_loss = self.run_eval(model, val_dataloader)
-            print(f"Epoch {epoch+1}: Validation loss {val_loss} | Accuracy {val_acc} | AUC {val_auc}")
+            val_loss, val_f1, val_auc, val_spec, val_rec = self.run_eval(model, val_dataloader)
+            val_acc =  2 * (val_spec * val_rec) /(val_spec + val_rec)
+            print(f"Epoch {epoch+1}: Validation loss {val_loss} | F1 {val_f1} | AUC {val_auc} | Acc H-Mean {val_acc}")
             
             if best_acc is None or val_acc > best_acc:
                 best_acc = val_acc
@@ -149,42 +150,43 @@ class DSTrainer:
         self.model = model
         print('Best epoch: ', best_epoch+1)
 
-    def run_eval(self, model, dataloader, additional_stats=False):
+    def run_eval(self, model, dataloader, verbose=False):
         model.eval()
         model = model.to(self.device)
 
-        criterion = nn.BCEWithLogitsLoss()
+        num_labels=len(self.class_labels)
 
         loss_meter = AverageMeter()
         auc_meter = AverageMeter()
-        acc_meter = AverageMeter()
+        f1_meter = AverageMeter()
+        spec_meter = AverageMeter()
+        rec_meter = AverageMeter()
 
-        if additional_stats:
-            specificity = MultilabelSpecificity(num_labels=len(self.class_labels)).to(self.device)
-            spec_meter = AverageMeter()
-            recall = MultilabelRecall(num_labels=len(self.class_labels)).to(self.device)
-            rec_meter = AverageMeter()
+        f1_func = MultilabelF1Score(num_labels=num_labels).to(self.device)
+        specificity = MultilabelSpecificity(num_labels=num_labels).to(self.device)
+        recall = MultilabelRecall(num_labels=num_labels).to(self.device)
+
         with torch.no_grad():
             for images, class_inds in dataloader:
                 images, class_inds = images.to(self.device), class_inds.to(self.device)
 
                 predictions = model(images)
-                loss = criterion(predictions, class_inds.float())
 
+                loss = self.criterion(predictions, class_inds.float())
                 loss_meter.update(loss.item(), len(class_inds))
 
                 auc = calculate_auc(predictions, class_inds)
                 auc_meter.update(auc, len(class_inds))
                 
-                acc = multilabel_logit_accuracy(predictions, class_inds)
-                acc_meter.update(acc, len(class_inds))
+                f1 = f1_func(predictions, class_inds)
+                f1_meter.update(f1, len(class_inds))
 
-                if additional_stats:
-                    spec = specificity(predictions, class_inds)
-                    spec_meter.update(spec.item(), len(class_inds))
-                    rec = recall(predictions, class_inds)
-                    rec_meter.update(rec.item(), len(class_inds))
-                    print(f"Loss {loss} | Accuracy {acc} | AUC {auc} | Specificity {spec} | Recall {rec}")
-        if additional_stats:
-            return acc_meter.average(), auc_meter.average(), loss_meter.average(), spec_meter.average(), rec_meter.average()
-        return acc_meter.average(), auc_meter.average(), loss_meter.average()
+                spec = specificity(predictions, class_inds)
+                spec_meter.update(spec.item(), len(class_inds))
+                rec = recall(predictions, class_inds)
+                rec_meter.update(rec.item(), len(class_inds))
+
+                if verbose:
+                  print(f"Loss {loss} | F1 {f1} | AUC {auc} | Specificity {spec} | Recall {rec} | Bal Acc {(spec+rec)/2}")
+
+        return loss_meter.average(), f1_meter.average(), auc_meter.average(), spec_meter.average(), rec_meter.average()

@@ -3,7 +3,7 @@ from torch import nn
 from abc import abstractmethod
 
 from utils.prototype import class_variance
-from utils.f1_loss import F1Loss
+from utils.f1_loss import BalAccuracyLoss
 
 def euclidean_distance(prototype, query):
     # prototype: (L, D) | query: (N, L, D)
@@ -30,7 +30,7 @@ class MetaModelBase(nn.Module):
         super().__init__()
         self.encoder = imgtxt_encoder
         self.class_prototype_aggregator = class_prototype_aggregator
-        self.loss_fn = F1Loss(logits=True)
+        self.loss_fn = BalAccuracyLoss(logits=True)
         self.use_variance = False
     
     def set_class_prototype_details(self, class_labels, support_images, support_label_inds):
