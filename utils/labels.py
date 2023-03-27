@@ -76,16 +76,6 @@ VINDR_SPLIT = {
         'Pneumonia','Pleural effusion','Tuberculosis',
         'Infiltration','ILD','Consolidation'
     ],
-    'train-subset': [
-        # 'No finding', 'Other diseases', 
-        'Aortic enlargement', 'Cardiomegaly', 
-        'Pleural thickening','Pulmonary fibrosis', 'Lung Opacity',
-        'Other lesion',
-        'Pneumonia',
-        # 'Pleural effusion','Tuberculosis',
-        # 'Infiltration',
-        # 'ILD','Consolidation'
-    ],
     'test': [
         'Lung tumor','Nodule/Mass','Edema','Lung cyst',
         'Rib fracture','Clavicle fracture','Lung cavity'
@@ -96,27 +86,6 @@ VINDR_SPLIT = {
     ]
 }
 
-# VINDR_SPLIT2 = {
-#     'train': [
-#         'No finding', 'Other diseases','Pneumonia',
-#         'Aortic enlargement', 'Cardiomegaly', 
-#         'Pleural thickening','Pulmonary fibrosis', 'Lung Opacity', 'Other lesion',
-#         'Pleural effusion'
-#     ],
-#     'test': [
-#         'Lung tumor',
-#         'Nodule/Mass','Lung cavity',
-#         'Rib fracture',
-#         'Consolidation','ILD','Infiltration'
-#         # 'Edema','Lung cyst','Clavicle fracture',
-#     ],
-#     'val': [
-#         # 'COPD',
-#         'Tuberculosis',
-#         'Pneumothorax','Mediastinal shift', 'Emphysema',
-#         'Enlarged PA', 'Atelectasis', 'Calcification', 
-#     ]
-# }
 VINDR_SPLIT2 = {
     'train': [
         'No finding', 'Other diseases','Pneumonia',

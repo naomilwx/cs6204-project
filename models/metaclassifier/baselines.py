@@ -2,20 +2,21 @@ import torch
 from torch import nn
 
 from models.metaclassifier.base import MetaModelBase
+from utils.f1_loss import F1Loss
 
 class ProtoNet(MetaModelBase):
     def __init__(self, imgtxt_encoder, class_prototype_aggregator, distance_func, scale=1.0, trainable_base=True):
         super(ProtoNet, self).__init__(imgtxt_encoder, class_prototype_aggregator)
         self.distance_func = distance_func
         self.scale = nn.Parameter(torch.tensor(scale))
-        self.loss = nn.BCELoss()
+        self.loss_fn = F1Loss(logits=False)
         self.set_trainable(trainable_base, include_logit_scale=False)
     
     def set_trainable(self, trainable, include_logit_scale=False):
         self.encoder.set_trainable(trainable, trainable, include_logit_scale=include_logit_scale)
 
     def get_scale(self):
-        self.scale.data = torch.clamp(self.scale.data, 0)
+        self.scale.data = torch.clamp(self.scale.data, 1e-5)
         return self.scale
 
     def forward(self, query_images):
@@ -29,7 +30,6 @@ class ProtoNet(MetaModelBase):
 class RelationNet(MetaModelBase):
     def __init__(self, imgtxt_encoder, embed_dim, class_prototype_aggregator, fc_hidden_size=16, activation=nn.ReLU, dropout=0.3, use_variance=False):
         super(RelationNet, self).__init__(imgtxt_encoder, class_prototype_aggregator)
-        self.loss_fn = nn.BCEWithLogitsLoss()
         self.use_variance = use_variance
         if use_variance:
             self.cls = nn.Sequential(

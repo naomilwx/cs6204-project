@@ -13,7 +13,7 @@ from utils.sampling import FewShotBatchSampler, ClassCycler
 from utils.image import CenterRatioCrop
 from utils.data import get_query_and_support_ids
 
-from torchmetrics.classification import MultilabelRecall, MultilabelSpecificity, MultilabelAccuracy
+from torchmetrics.classification import MultilabelRecall, MultilabelSpecificity, MultilabelAccuracy, MultilabelF1Score
 
 class DataloaderIterator:
     def __init__(self, dataloader):
@@ -99,7 +99,7 @@ class ControlledFewShotBatchSampler(FewShotBatchSampler):
             return super().get_iteration_classes(it)
     
 class ControlledMetaTrainer:
-    def __init__(self, model, shots, n_ways, dataset_config, train_n_ways=None, n_query=None, device='cpu', metric_funcs=None):
+    def __init__(self, model, shots, n_ways, dataset_config, train_n_ways=None, n_query=None, device='cpu', use_f1_accuracy=True):
         self.model = model
         self.device = device
 
@@ -115,6 +115,8 @@ class ControlledMetaTrainer:
         self.dataset_config = dataset_config
         self.initialise_datasets(dataset_config)
         self.initialise_dataloaders()
+        self.use_f1 = use_f1_accuracy
+
     
     def create_query_eval_dataloader(self, split_type='train'):
         img_info = self.dataset_config.img_info
@@ -155,16 +157,23 @@ class ControlledMetaTrainer:
     def _reset_train_iteration_classes(self):
         self.train_query_dataset.sampler.reset_sample_classes()
         self.train_support_dataset.sampler.reset_sample_classes()
+
+    def accuracy_func(self, num_clases):
+        if self.use_f1:
+            return MultilabelF1Score(num_labels=num_clases).to(self.device)
+        else:
+            return MultilabelAccuracy(num_labels=num_clases).to(self.device)
         
-    def run_train(self, epochs, lr=1e-5, min_lr=5e-7):
+    def run_train(self, epochs, lr=1e-5, min_lr=5e-7, lr_change_step=5):
         model = self.model.to(self.device)
         best_epoch = None
         best_acc = None
         
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-        scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=min_lr, max_lr=lr, cycle_momentum=False, step_size_up=10)
+        scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=min_lr, max_lr=lr, cycle_momentum=False, step_size_up=lr_change_step)
 
-        accuracy_func = MultilabelAccuracy(num_labels=self.train_n_ways).to(self.device)
+        accuracy_func = self.accuracy_func(self.train_n_ways)
+
         cycler = ClassCycler(len(self.train_query_dataset.classes))
         support_iterator = DataloaderIterator(self.train_support_loader)
         for epoch in range(epochs):
@@ -220,7 +229,8 @@ class ControlledMetaTrainer:
         if n_ways is None:
             n_ways = self.n_ways
 
-        accuracy_func = MultilabelAccuracy(num_labels=n_ways).to(self.device)
+        accuracy_func = self.accuracy_func(n_ways)
+        
         if additional_stats:
             specificity_func = MultilabelSpecificity(num_labels=n_ways).to(self.device)
             spec_meter = AverageMeter()
