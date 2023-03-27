@@ -2,6 +2,7 @@ import torch
 import copy
 from utils.metrics import AverageMeter, calculate_auc, multilabel_logit_accuracy
 from models.attention.model import image_text_logits
+from torchmetrics.classification import MultilabelRecall, MultilabelSpecificity
 
 class Trainer:
     def __init__(self, model, class_labels, device='cpu'):
@@ -50,13 +51,19 @@ class Trainer:
         self.model = model
         print('Best epoch: ', best_epoch+1)
 
-    def run_eval(self, model, dataloader, full_training=False):
+    def run_eval(self, model, dataloader, full_training=False, additional_stats=False):
         model.eval()
         model = model.to(self.device)
         
         loss_meter = AverageMeter()
         auc_meter = AverageMeter()
         acc_meter = AverageMeter()
+
+        if additional_stats:
+            specificity = MultilabelSpecificity(num_labels=len(self.class_labels)).to(self.device)
+            spec_meter = AverageMeter()
+            recall = MultilabelRecall(num_labels=len(self.class_labels)).to(self.device)
+            rec_meter = AverageMeter()
         with torch.no_grad():
             for images, class_inds in dataloader:
                 images, class_inds = images.to(self.device), class_inds.to(self.device)
@@ -75,5 +82,15 @@ class Trainer:
             
                 acc = multilabel_logit_accuracy(logits_per_image, class_inds)
                 acc_meter.update(acc, len(class_inds))
+
+                if additional_stats:
+                    spec = specificity(logits_per_image, class_inds)
+                    spec_meter.update(spec.item(), len(class_inds))
+                    rec = recall(logits_per_image, class_inds)
+                    rec_meter.update(rec.item(), len(class_inds))
+                    print(f"Loss {loss} | Accuracy {acc} | AUC {auc} | Specificity {spec} | Recall {rec}")
+
+        if additional_stats:
+            return acc_meter.average(), auc_meter.average(), loss_meter.average(), spec_meter.average(), rec_meter.average()
 
         return acc_meter.average(), auc_meter.average(), loss_meter.average()

@@ -27,21 +27,37 @@ class ProtoNet(MetaModelBase):
         return probabilities, query_image_embeddings
     
 class RelationNet(MetaModelBase):
-    def __init__(self, imgtxt_encoder, embed_dim, class_prototype_aggregator, fc_hidden_size=16, activation=nn.ReLU, dropout=0.3):
+    def __init__(self, imgtxt_encoder, embed_dim, class_prototype_aggregator, fc_hidden_size=16, activation=nn.ReLU, dropout=0.3, use_variance=False):
         super(RelationNet, self).__init__(imgtxt_encoder, class_prototype_aggregator)
         self.loss_fn = nn.BCEWithLogitsLoss()
-        self.cls = nn.Sequential(
-            nn.Linear(embed_dim*2, fc_hidden_size),
-            activation(),
-            nn.Dropout(dropout),
-            nn.Linear(fc_hidden_size, 1)
-        )
+        self.use_variance = use_variance
+        if use_variance:
+            self.cls = nn.Sequential(
+                nn.Linear(embed_dim*3, fc_hidden_size),
+                activation(),
+                nn.Dropout(dropout),
+                nn.Linear(fc_hidden_size, 1)
+            )
+        else:
+            self.cls = nn.Sequential(
+                nn.Linear(embed_dim*2, fc_hidden_size),
+                activation(),
+                nn.Dropout(dropout),
+                nn.Linear(fc_hidden_size, 1)
+            )
         self.encoder.set_trainable(False, False)
 
     def forward(self, query_images):
         query_image_embeddings = self.encoder.embed_image(query_images, pool=True)
         query_image_embeddings = query_image_embeddings.unsqueeze(1).repeat(1, self.class_prototypes.shape[0], 1)
         class_prototypes = self.class_prototypes.repeat(query_image_embeddings.shape[0], 1, 1)
+
+        if self.use_variance:
+            class_prototypes_var = self.class_prototypes_var.repeat(query_image_embeddings.shape[0], 1, 1)
+
+        if self.use_variance:
+            out = self.cls(torch.cat((class_prototypes, class_prototypes_var, query_image_embeddings), dim=2))
+        else:
+            out = self.cls(torch.cat((class_prototypes, query_image_embeddings), dim=2))
        
-        out = self.cls(torch.cat((class_prototypes, query_image_embeddings), dim=2))
         return out.squeeze(2), query_image_embeddings # NxLx1 -> NxL

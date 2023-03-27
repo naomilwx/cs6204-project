@@ -40,6 +40,10 @@ class ImageEncoder(nn.Module):
             param.requires_grad = trainable
         self.set_backbone_trainable(include_backbone)
 
+    def set_backbone_layer_trainable(self, trainable, idx):
+        for param in self.backbone[idx].parameters():
+            param.requires_grad = trainable
+
     def forward(self, input):
         # B, C, H, W
         img = self.backbone(input)

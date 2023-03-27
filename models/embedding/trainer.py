@@ -51,9 +51,9 @@ class Trainer:
         acc_meter = AverageMeter()
 
         if additional_stats:
-            specificity = MultilabelSpecificity(num_labels=self.n_ways).to(self.device)
+            specificity = MultilabelSpecificity(num_labels=len(self.class_labels)).to(self.device)
             spec_meter = AverageMeter()
-            recall = MultilabelRecall(num_labels=self.n_ways).to(self.device)
+            recall = MultilabelRecall(num_labels=len(self.class_labels)).to(self.device)
             rec_meter = AverageMeter()
         with torch.no_grad():
             for images, class_inds in dataloader:
