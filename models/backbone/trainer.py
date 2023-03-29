@@ -179,7 +179,7 @@ class DSTrainer:
                 auc_meter.update(auc, len(class_inds))
                 
                 f1 = f1_func(predictions, class_inds)
-                f1_meter.update(f1, len(class_inds))
+                f1_meter.update(f1.item(), len(class_inds))
 
                 spec = specificity(predictions, class_inds)
                 spec_meter.update(spec.item(), len(class_inds))
