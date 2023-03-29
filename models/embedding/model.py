@@ -108,6 +108,7 @@ class ImageTextEmbedding(nn.Module):
         return self.logit_scale.exp()
     
     def compute_logits(self, text_emb, img_emb):
+        # text_emb: (L, E), img_embed: (N, E)
         logit_scale = self.get_logit_scale()        
         if len(img_emb.shape) == 4:
             logits_per_image = logit_scale * torch.matmul(img_emb.permute(2,3,0,1), text_emb.t())

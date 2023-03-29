@@ -26,7 +26,7 @@ class F1Loss(nn.Module):
         assert y_pred.ndim == 2
         assert y_true.ndim == 2
         if self.logits:
-            y_pred = F.softmax(y_pred, dim=1)
+            y_pred = y_pred.sigmoid()
         
         tp = (y_true * y_pred).sum(dim=0).to(torch.float32)
         tn = ((1 - y_true) * (1 - y_pred)).sum(dim=0).to(torch.float32)
@@ -54,7 +54,7 @@ class BalAccuracyLoss(nn.Module):
         assert y_pred.ndim == 2
         assert y_true.ndim == 2
         if self.logits:
-            y_pred = F.softmax(y_pred, dim=1)
+            y_pred = y_pred.sigmoid()
         
         tp = (y_true * y_pred).sum(dim=0).to(torch.float32)
         tn = ((1 - y_true) * (1 - y_pred)).sum(dim=0).to(torch.float32)

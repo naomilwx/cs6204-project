@@ -102,6 +102,7 @@ class ControlledMetaTrainer:
     def __init__(self, model, shots, n_ways, dataset_config, train_n_ways=None, n_query=None, device='cpu'):
         self.model = model
         self.device = device
+        self.best_acc = None
 
         self.shots = shots
         self.n_ways = n_ways
@@ -160,7 +161,6 @@ class ControlledMetaTrainer:
     def run_train(self, epochs, lr=1e-5, min_lr=5e-7, lr_change_step=5):
         model = self.model.to(self.device)
         best_epoch = None
-        best_acc = None
         
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
         scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=min_lr, max_lr=lr, cycle_momentum=False, step_size_up=lr_change_step)
@@ -204,8 +204,8 @@ class ControlledMetaTrainer:
 
             self._reset_train_iteration_classes()
 
-            if best_acc is None or val_acc > best_acc:
-                best_acc = val_acc
+            if self.best_acc is None or val_acc > self.best_acc:
+                self.best_acc = val_acc
                 self.best_model = copy.deepcopy(model)
                 best_epoch = epoch
         self.model = model

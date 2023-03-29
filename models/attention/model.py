@@ -10,7 +10,7 @@ def image_text_logits(text_embeddings, prototypes, scale=1):
     return (fac * prototypes).sum(axis=2) * scale
     
 class BaseLabelImageAttention(nn.Module):
-    def __init__(self,  temperature=1, cls_weight=1, cls_loss=nn.CrossEntropyLoss()) -> None:
+    def __init__(self,  temperature=1, cls_weight=1, cls_loss=nn.BCEWithLogitsLoss()) -> None:
         super().__init__()
         self.con_loss = SupConLoss(temperature=temperature, contrast_mode='one')
         self.class_loss = cls_loss
@@ -45,7 +45,7 @@ class BaseLabelImageAttention(nn.Module):
         return self.con_loss(prototypes.unsqueeze(1), classes)
     
 class LabelImageMHAttention(BaseLabelImageAttention):
-    def __init__(self, dim_in, n_head, device='cpu', dropout=0.1, temperature=1, cls_weight=1, cls_loss=nn.CrossEntropyLoss()):
+    def __init__(self, dim_in, n_head, device='cpu', dropout=0.1, temperature=1, cls_weight=1, cls_loss=nn.BCEWithLogitsLoss()):
         super().__init__(temperature=temperature, cls_weight=cls_weight, cls_loss=cls_loss)
         self.kMap = nn.Linear(dim_in, dim_in)
         self.qMap = nn.Linear(dim_in, dim_in)
@@ -66,7 +66,6 @@ class LabelImageMHAttention(BaseLabelImageAttention):
         value = self.vMap(images)
         query = self.qMap(text_embeddings)
         out, _ = self.attn(query, key, value, need_weights=False)
-        
  
         return out / out.norm(dim=-1, keepdim=True)
 
@@ -74,9 +73,6 @@ class LabelImageAttention(BaseLabelImageAttention):
     def __init__(self, dim_in, n_head, dropout=0.1, num_layers=6, temperature=1, cls_weight=1, cls_loss=nn.CrossEntropyLoss()):
         super().__init__(temperature=temperature, cls_weight=cls_weight, cls_loss=cls_loss)
         self.attn = nn.Transformer(dim_in, batch_first=True, nhead=n_head, dropout=dropout, num_decoder_layers=num_layers, num_encoder_layers=num_layers)
-        # self.con_loss = SupConLoss(temperature=temperature, contrast_mode='one')
-        # self.class_loss = cls_loss
-        # self.cls_weight = cls_weight
 
     # def set_trainable(self, trainable):
     #     for param in self.attn.parameters():

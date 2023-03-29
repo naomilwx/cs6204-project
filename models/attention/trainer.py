@@ -9,11 +9,11 @@ class Trainer:
         self.model = model
         self.device = device
         self.class_labels = class_labels
+        self.best_acc = None
     
-    def run_train(self, epochs, dataloader, val_dataloader, lr=1e-4, min_lr=1e-6, full_training=False, encoder_only=False):
+    def run_train(self, epochs, dataloader, val_dataloader, lr=1e-4, min_lr=1e-6, full_training=False, encoder_only=False, enc_weight=0.5):
         model = self.model.to(self.device)
         best_epoch = None
-        best_loss = None
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
         if full_training or encoder_only:
             model.unfreeze_encoder()
@@ -32,14 +32,20 @@ class Trainer:
                 images, class_inds = images.to(self.device), class_inds.to(self.device)
                 optimizer.zero_grad()
 
-                text_embeddings, _, prototypes = model(self.class_labels, images, class_inds)
+                # text_embeddings, _, prototypes = model(self.class_labels, images, class_inds)
+                text_embeddings, _, prototypes = model(self.class_labels, images)
                 if encoder_only:
                     loss =  model.encoder_loss(text_embeddings, prototypes, class_inds)
                 else:
+                    # loss = 0.5 * model.attention_loss(text_embeddings, prototypes, class_inds)
                     loss = model.attention_loss(text_embeddings, prototypes, class_inds)
                 
                 if full_training:
-                    loss += 0.5 * model.encoder_loss(text_embeddings, prototypes, class_inds)
+                    loss += enc_weight * model.encoder_loss(text_embeddings, prototypes, class_inds)
+
+                # if not encoder_only:
+                #     te, _, ptyps = model(self.class_labels, images)
+                #     loss += 0.5 * model.attention_loss(te, ptyps, class_inds)
                 
                 loss.backward()
                 optimizer.step()
@@ -50,18 +56,18 @@ class Trainer:
             
             print(f"Epoch {epoch+1}: Training loss {loss_meter.average()}")
 
-            val_loss, val_racc, val_auc, val_spec, val_rec = self.run_eval(model, val_dataloader, full_training=full_training, encoder_only=encoder_only)
+            val_loss, val_racc, val_auc, val_spec, val_rec = self.run_eval(model, val_dataloader, full_training=full_training, encoder_only=encoder_only, enc_weight=enc_weight)
             val_acc =  2 * (val_spec * val_rec) /(val_spec + val_rec)
-            print(f"Epoch {epoch+1}: Validation loss {val_loss} | Accuracy {val_racc} | AUC {val_auc} | Acc H-Mean {val_acc}")
+            print(f"Epoch {epoch+1}: Validation loss {val_loss} | Accuracy {val_racc} | AUC {val_auc} | Acc H-Mean {val_acc} | Spec {val_spec} | Recall {val_rec}")
 
-            if best_loss is None or val_loss < best_loss:
-                best_loss = val_loss
+            if self.best_acc is None or val_acc > self.best_acc:
+                self.best_acc = val_acc
                 self.best_model = copy.deepcopy(model)
                 best_epoch = epoch
         self.model = model
         print('Best epoch: ', best_epoch+1)
 
-    def run_eval(self, model, dataloader, full_training=False, verbose=False, encoder_only=False):
+    def run_eval(self, model, dataloader, full_training=False, verbose=False, encoder_only=False, enc_weight=0.5):
         model.eval()
         model = model.to(self.device)
         
@@ -78,14 +84,14 @@ class Trainer:
                 images, class_inds = images.to(self.device), class_inds.to(self.device)
                 text_embeddings, _, prototypes = model(self.class_labels, images)
 
-                logits_per_image = image_text_logits(text_embeddings, prototypes, model.encoder.get_logit_scale())
                 if encoder_only:
                     loss = model.encoder_loss(text_embeddings, prototypes, class_inds).item()
                 else:
                     loss = model.attention_loss(text_embeddings, prototypes, class_inds).item()
 
+                logits_per_image = image_text_logits(text_embeddings, prototypes, model.encoder.get_logit_scale())
                 if full_training:
-                    loss += 0.5 * model.encoder.contrastive_logit_loss(logits_per_image.t(), logits_per_image, class_inds).item()
+                    loss += enc_weight * model.encoder.contrastive_logit_loss(logits_per_image.t(), logits_per_image, class_inds).item()
         
                 loss_meter.update(loss, len(class_inds))
 

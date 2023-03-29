@@ -115,11 +115,11 @@ class DSTrainer:
         self.device = device
         self.class_labels = class_labels
         self.criterion = criterion
+        self.best_acc = None
     
     def run_train(self, epochs, dataloader, val_dataloader, lr=1e-4, min_lr=1e-6, weight_decay=1e-5):
         model = self.model.to(self.device)
         best_epoch = None
-        best_acc = None
         optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
         scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=min_lr, max_lr=lr, cycle_momentum=False, step_size_up=10)
         for epoch in range(epochs):
@@ -143,8 +143,8 @@ class DSTrainer:
             val_acc =  2 * (val_spec * val_rec) /(val_spec + val_rec)
             print(f"Epoch {epoch+1}: Validation loss {val_loss} | F1 {val_f1} | AUC {val_auc} | Acc H-Mean {val_acc}")
             
-            if best_acc is None or val_acc > best_acc:
-                best_acc = val_acc
+            if self.best_acc is None or val_acc > self.best_acc:
+                self.best_acc = val_acc
                 self.best_model = copy.deepcopy(model)
                 best_epoch = epoch
         self.model = model
