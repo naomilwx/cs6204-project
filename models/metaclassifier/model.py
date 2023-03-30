@@ -22,7 +22,7 @@ class MetaModelWithAttention(MetaModelBase):
         self.encoder.set_trainable(False, False, include_text_bb=False, include_logit_scale=False)
         self.set_attention_model_trainable(False)
 
-    def set_attention_model_trainable(self, trainable, weight = 0.5):
+    def set_attention_model_trainable(self, trainable, weight = 0.1):
         self.attn_model.set_trainable(trainable)
         if trainable:
             self.attention_loss_weight = weight
@@ -31,8 +31,9 @@ class MetaModelWithAttention(MetaModelBase):
     
     def set_class_prototype_details(self, class_labels, support_images, support_label_inds):
         text_embeddings, image_embeddings = self.encoder(class_labels, support_images, pool=False)
-        support_prototypes = self.attn_model(text_embeddings, image_embeddings, support_label_inds)
-        
+        # support_prototypes = self.attn_model(text_embeddings, image_embeddings, support_label_inds)
+        support_prototypes = self.attn_model(text_embeddings, image_embeddings)
+
         self.class_label_embeddings = text_embeddings
         self.class_prototypes = self.class_prototype_aggregator(support_prototypes, support_label_inds)
         if self.use_variance:

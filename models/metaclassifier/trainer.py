@@ -166,6 +166,7 @@ class ControlledMetaTrainer:
         scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=min_lr, max_lr=lr, cycle_momentum=False, step_size_up=lr_change_step)
 
         f1_func = MultilabelF1Score(num_labels=self.train_n_ways).to(self.device)
+        spec_func = MultilabelSpecificity(num_labels=self.train_n_ways).to(self.device)
 
         cycler = ClassCycler(len(self.train_query_dataset.classes))
         support_iterator = DataloaderIterator(self.train_support_loader)
@@ -173,6 +174,7 @@ class ControlledMetaTrainer:
             model.train()
             loss_meter = AverageMeter()
             f1_meter = AverageMeter()
+            spec_meter = AverageMeter()
             query_iterator = DataloaderIterator(self.train_query_loader)
             for i in range(len(self.train_query_loader)):
                 self._update_train_iteration_classes(cycler.next_n(self.train_n_ways))
@@ -188,16 +190,19 @@ class ControlledMetaTrainer:
                 loss = model.loss(query_proto, predictions, qclass_inds)
 
                 f1 = f1_func(predictions, qclass_inds)
-                f1_meter.update(f1, qclass_inds.shape[0])
+                f1_meter.update(f1.item(), qclass_inds.shape[0])
+
+                spec = spec_func(predictions, qclass_inds)
+                spec_meter.update(spec.item(), qclass_inds.shape[0])
 
                 loss.backward()
                 optimizer.step()
                 scheduler.step()
 
                 loss_meter.update(loss.item(), len(qimages))
-                print(f"Batch {i+1}: loss {loss_meter.average()} | F1 {f1}")
+                print(f"Batch {i+1}: Loss {loss.item()} | F1 {f1} | Spec {spec}")
             
-            print(f"Epoch {epoch+1}: Training loss {loss_meter.average()} | F1: {f1_meter.average()}")
+            print(f"Epoch {epoch+1}: Training loss {loss_meter.average()} | F1: {f1_meter.average()} | Spec {spec_meter.average()}")
             val_loss, val_raw_acc, val_f1, val_auc, val_spec, val_rec = self.run_eval(model, self.val_loader, n_ways=self.train_n_ways)
             val_acc = 2 * (val_spec * val_rec) /(val_spec + val_rec)
             print(f"Epoch {epoch+1}: Validation loss {val_loss} | F1 {val_f1}| Accuracy H-Mean {val_acc} | AUC {val_auc} | Raw Accuracy {val_raw_acc}")

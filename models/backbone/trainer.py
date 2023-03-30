@@ -136,7 +136,7 @@ class DSTrainer:
                 scheduler.step()
 
                 loss_meter.update(loss.item(), len(class_inds))
-                print(f"Batch {i+1}: loss {loss_meter.average()}")
+                print(f"Batch {i+1}: loss {loss.item()}")
             
             print(f"Epoch {epoch+1}: Training loss {loss_meter.average()}")
             val_loss, val_f1, val_auc, val_spec, val_rec = self.run_eval(model, val_dataloader)

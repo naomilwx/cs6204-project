@@ -74,27 +74,6 @@ class LabelImageAttention(BaseLabelImageAttention):
         super().__init__(temperature=temperature, cls_weight=cls_weight, cls_loss=cls_loss)
         self.attn = nn.Transformer(dim_in, batch_first=True, nhead=n_head, dropout=dropout, num_decoder_layers=num_layers, num_encoder_layers=num_layers)
 
-    # def set_trainable(self, trainable):
-    #     for param in self.attn.parameters():
-    #         param.requires_grad = trainable
-
-    # def image_text_logits(self, text_embedings, images, label_inds=None):
-    #     prototypes = self.forward(text_embedings, images, label_inds)
-    #     return image_text_logits(text_embedings, prototypes)
-    
-    # def loss(self, text_embeddings, prototypes, label_inds):
-    #     logits = image_text_logits(text_embeddings, prototypes)
-    #     return self.contrastive_loss(prototypes, label_inds) + self.cls_weight * self.classification_loss(logits, label_inds)
-    
-    # def classification_loss(self, logits, label_inds):
-    #     return self.class_loss(logits, label_inds.float())
-    
-    # def contrastive_loss(self, results, label_inds):
-    #     # results: (N, L, D), labels: (N, L)
-    #     classes = torch.nonzero(label_inds)[:,1] # (Np,)
-    #     prototypes = results[label_inds.bool()] # (Np, D)
-    #     return self.con_loss(prototypes.unsqueeze(1), classes)
-
     def forward(self, text_embeddings, images, label_inds=None):
         # transformer: (N, S, E), (N, T, E) -> (N, T, E)
         # texts: (L,D) , images: (N,D,H,W), label_inds: (N, L)
