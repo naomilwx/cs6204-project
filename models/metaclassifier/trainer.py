@@ -13,7 +13,7 @@ from utils.sampling import FewShotBatchSampler, ClassCycler
 from utils.image import CenterRatioCrop
 from utils.data import get_query_and_support_ids
 
-from torchmetrics.classification import MultilabelRecall, MultilabelSpecificity, MultilabelF1Score
+from torchmetrics.classification import MultilabelRecall, MultilabelSpecificity, MultilabelF1Score, MultilabelAccuracy
 
 class DataloaderIterator:
     def __init__(self, dataloader):
@@ -198,9 +198,9 @@ class ControlledMetaTrainer:
                 print(f"Batch {i+1}: loss {loss_meter.average()} | F1 {f1}")
             
             print(f"Epoch {epoch+1}: Training loss {loss_meter.average()} | F1: {f1_meter.average()}")
-            val_loss, val_f1, val_auc, val_spec, val_rec = self.run_eval(model, self.val_loader, n_ways=self.train_n_ways)
+            val_loss, val_raw_acc, val_f1, val_auc, val_spec, val_rec = self.run_eval(model, self.val_loader, n_ways=self.train_n_ways)
             val_acc = 2 * (val_spec * val_rec) /(val_spec + val_rec)
-            print(f"Epoch {epoch+1}: Validation loss {val_loss} | F1 {val_f1}| Accuracy H-Mean {val_acc} | AUC {val_auc}")
+            print(f"Epoch {epoch+1}: Validation loss {val_loss} | F1 {val_f1}| Accuracy H-Mean {val_acc} | AUC {val_auc} | Raw Accuracy {val_raw_acc}")
 
             self._reset_train_iteration_classes()
 
@@ -220,10 +220,12 @@ class ControlledMetaTrainer:
         f1_meter = AverageMeter()
         spec_meter = AverageMeter()
         rec_meter = AverageMeter()
+        acc_meter = AverageMeter()
 
         if n_ways is None:
             n_ways = self.n_ways
         
+        acc_func = MultilabelAccuracy(num_labels=n_ways).to(self.device)
         f1_func = MultilabelF1Score(num_labels=n_ways).to(self.device)
         specificity_func = MultilabelSpecificity(num_labels=n_ways).to(self.device)
         recall_func = MultilabelRecall(num_labels=n_ways).to(self.device)
@@ -250,12 +252,15 @@ class ControlledMetaTrainer:
                 rec = recall_func(predictions, qclass_inds)
                 rec_meter.update(rec.item(), qclass_inds.shape[0])
 
+                acc = acc_func(predictions, qclass_inds)
+                acc_meter.update(acc.item(), qclass_inds.shape[0])
+
                 if verbose:
                     # print(class_labels)
                     # print(torch.nonzero(class_inds)[:,1].bincount())
                     # print(predictions)
-                    print(f"Loss {loss} | F1 {f1} | AUC {auc} | Specificity {spec} | Recall {rec} | Bal Acc {(spec+rec)/2}")
-        return loss_meter.average(), f1_meter.average(), auc_meter.average(), spec_meter.average(), rec_meter.average()
+                    print(f"Loss {loss} | F1 {f1} | AUC {auc} | Specificity {spec} | Recall {rec} | Bal Acc {(spec+rec)/2} | Raw Acc {acc}")
+        return loss_meter.average(), acc_meter.average(), f1_meter.average(), auc_meter.average(), spec_meter.average(), rec_meter.average()
     
 def _collate_batch(batch):
     images, class_inds, labels = [], [], []
