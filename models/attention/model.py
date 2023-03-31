@@ -117,5 +117,9 @@ class LabelImagePrototypeModel(nn.Module):
         return self.attention.loss(text_embeddings, prototypes, label_inds)
     
     def encoder_loss(self, text_embeddings, prototypes, label_inds):
+        # label_inds: (N, L)
+        # N, L, D
+        mask = label_inds.unsqueeze(-1).repeat(1, 1, prototypes.shape[2])
+        prototypes = mask * prototypes
         logits_per_image = image_text_logits(text_embeddings, prototypes, self.encoder.get_logit_scale())
         return self.encoder.contrastive_logit_loss(logits_per_image.t(), logits_per_image, label_inds)

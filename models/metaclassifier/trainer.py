@@ -205,7 +205,7 @@ class ControlledMetaTrainer:
             print(f"Epoch {epoch+1}: Training loss {loss_meter.average()} | F1: {f1_meter.average()} | Spec {spec_meter.average()}")
             val_loss, val_raw_acc, val_f1, val_auc, val_spec, val_rec = self.run_eval(model, self.val_loader, n_ways=self.train_n_ways)
             val_acc = 2 * (val_spec * val_rec) /(val_spec + val_rec)
-            print(f"Epoch {epoch+1}: Validation loss {val_loss} | F1 {val_f1}| Accuracy H-Mean {val_acc} | AUC {val_auc} | Raw Accuracy {val_raw_acc}")
+            print(f"Epoch {epoch+1}: Validation loss {val_loss} | Raw Accuracy {val_raw_acc} | F1 {val_f1} | Accuracy H-Mean {val_acc} | AUC {val_auc} | Spec {spec} ")
 
             self._reset_train_iteration_classes()
 
@@ -267,6 +267,106 @@ class ControlledMetaTrainer:
                     print(f"Loss {loss} | F1 {f1} | AUC {auc} | Specificity {spec} | Recall {rec} | Bal Acc {(spec+rec)/2} | Raw Acc {acc}")
         return loss_meter.average(), acc_meter.average(), f1_meter.average(), auc_meter.average(), spec_meter.average(), rec_meter.average()
     
+class DynamicMetaTrainer(ControlledMetaTrainer):
+    def __init__(self, model, shots, n_ways, dataset_config, train_n_ways=None, n_query=None, device='cpu'):
+        super().__init__(model, shots, n_ways, dataset_config, train_n_ways=train_n_ways, n_query=n_query, device=device)
+
+    def create_query_eval_dataloader(self, split_type='train'):
+        img_info = self.dataset_config.img_info
+        img_path = self.dataset_config.img_path
+        classes_split_map = self.dataset_config.classes_split_map
+        label_names_map = self.dataset_config.label_names_map
+        mean_std = self.dataset_config.mean_std
+
+        query_dataset = MDataset(img_path, img_info, self.query_image_ids, label_names_map, classes_split_map[split_type], mean_std=mean_std)
+        return _create_dataloader(query_dataset, self.shots, self.n_ways, n_query=self.n_query)
+
+    def initialise_datasets(self, ds_config):
+        img_info = ds_config.img_info
+        img_path = ds_config.img_path
+        classes_split_map = ds_config.classes_split_map
+        label_names_map = ds_config.label_names_map
+        mean_std = ds_config.mean_std
+
+        query_image_ids, _ = get_query_and_support_ids(img_info, ds_config.training_split_path)
+        self.query_image_ids = query_image_ids
+
+        self.train_dataset = _create_dataset(img_path, img_info, label_names_map, classes_split_map, 'train', mean_std)
+        self.val_dataset = _create_dataset(img_path, img_info, label_names_map, classes_split_map, 'val', mean_std)
+        self.test_dataset = _create_dataset(img_path, img_info, label_names_map, classes_split_map, 'test', mean_std)
+
+    def initialise_dataloaders(self):
+        self.train_loader = _create_dataloader(self.train_query_dataset, self.n_query, self.train_n_ways, n_query=self.n_query)
+        self.val_loader = _create_dataloader(self.val_dataset, self.shots, self.n_ways, n_query=self.n_query)
+        self.test_loader = _create_dataloader(self.test_dataset, self.shots, self.n_ways, n_query=self.n_query)
+
+    def _update_train_iteration_classes(self, classes):
+        self.train_dataset.sampler.set_sample_classes(classes)
+
+    def _reset_train_iteration_classes(self):
+        self.train_dataset.sampler.reset_sample_classes()
+
+
+    def run_train(self, epochs, lr=1e-5, min_lr=5e-7, lr_change_step=5):
+        model = self.model.to(self.device)
+        best_epoch = None
+        
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+        scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=min_lr, max_lr=lr, cycle_momentum=False, step_size_up=lr_change_step)
+
+        f1_func = MultilabelF1Score(num_labels=self.train_n_ways).to(self.device)
+        spec_func = MultilabelSpecificity(num_labels=self.train_n_ways).to(self.device)
+
+        cycler = ClassCycler(len(self.train_dataset.classes))
+        for epoch in range(epochs):
+            model.train()
+
+            loss_meter = AverageMeter()
+            f1_meter = AverageMeter()
+            spec_meter = AverageMeter()
+
+            n_ways = self.train_n_ways
+            for i, (images, class_inds, class_labels) in enumerate(self.train_loader):
+                self._update_train_iteration_classes(cycler.next_n(n_ways))
+
+                s_size = self.shots * n_ways
+                simages, qimages = images[:s_size,:,:].to(self.device), images[s_size:,:,:].to(self.device)
+                sclass_inds, qclass_inds = class_inds[:s_size,:].to(self.device), class_inds[s_size:,:].to(self.device)
+                
+                
+                simages, sclass_inds = simages.to(self.device), sclass_inds.to(self.device)
+
+                optimizer.zero_grad()
+                predictions, query_proto = model.update_support_and_classify(class_labels, simages, sclass_inds, qimages)
+                loss = model.loss(query_proto, predictions, qclass_inds)
+
+                f1 = f1_func(predictions, qclass_inds)
+                f1_meter.update(f1.item(), qclass_inds.shape[0])
+
+                spec = spec_func(predictions, qclass_inds)
+                spec_meter.update(spec.item(), qclass_inds.shape[0])
+
+                loss.backward()
+                optimizer.step()
+                scheduler.step()
+
+                loss_meter.update(loss.item(), len(qimages))
+                print(f"Batch {i+1}: Loss {loss.item()} | F1 {f1} | Spec {spec}")
+            
+            print(f"Epoch {epoch+1}: Training loss {loss_meter.average()} | F1: {f1_meter.average()} | Spec {spec_meter.average()}")
+            val_loss, val_raw_acc, val_f1, val_auc, val_spec, val_rec = self.run_eval(model, self.val_loader, n_ways=self.train_n_ways)
+            val_acc = 2 * (val_spec * val_rec) /(val_spec + val_rec)
+            print(f"Epoch {epoch+1}: Validation loss {val_loss} | Raw Accuracy {val_raw_acc} | F1 {val_f1} | Accuracy H-Mean {val_acc} | AUC {val_auc} | Spec {spec} ")
+
+            self._reset_train_iteration_classes()
+
+            if self.best_acc is None or val_acc > self.best_acc:
+                self.best_acc = val_acc
+                self.best_model = copy.deepcopy(model)
+                best_epoch = epoch
+        self.model = model
+        print('Best epoch: ', best_epoch+1)
+    
 def _collate_batch(batch):
     images, class_inds, labels = [], [], []
     for (_image, _inds, _labels) in batch:
@@ -289,5 +389,3 @@ def _create_dataloader(dataset, shots, n_ways, n_query):
         sampler = ControlledFewShotBatchSampler(dataset.get_class_indicators(), shots, n_ways=n_ways, include_query=n_query!=0, n_query=n_query)
         dataset.sampler = sampler
     return DataLoader(dataset, batch_sampler=dataset.sampler, collate_fn=_collate_batch)
-
-    

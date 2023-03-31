@@ -32,21 +32,15 @@ class Trainer:
                 images, class_inds = images.to(self.device), class_inds.to(self.device)
                 optimizer.zero_grad()
 
-                # text_embeddings, _, prototypes = model(self.class_labels, images, class_inds)
                 text_embeddings, _, prototypes = model(self.class_labels, images)
                 if encoder_only:
                     loss =  model.encoder_loss(text_embeddings, prototypes, class_inds)
                 else:
-                    # loss = 0.5 * model.attention_loss(text_embeddings, prototypes, class_inds)
                     loss = model.attention_loss(text_embeddings, prototypes, class_inds)
                 
                 if full_training:
                     loss += enc_weight * model.encoder_loss(text_embeddings, prototypes, class_inds)
 
-                # if not encoder_only:
-                #     te, _, ptyps = model(self.class_labels, images)
-                #     loss += 0.5 * model.attention_loss(te, ptyps, class_inds)
-                
                 loss.backward()
                 optimizer.step()
                 scheduler.step()
