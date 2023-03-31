@@ -8,12 +8,12 @@ import copy
 from skimage import io
 import torchvision.transforms as transforms
 
-from utils.metrics import AverageMeter, calculate_auc
+from utils.metrics import AverageMeter
 from utils.sampling import FewShotBatchSampler, ClassCycler
 from utils.image import CenterRatioCrop
 from utils.data import get_query_and_support_ids
 
-from torchmetrics.classification import MultilabelRecall, MultilabelSpecificity, MultilabelF1Score, MultilabelAccuracy
+from torchmetrics.classification import MultilabelRecall, MultilabelSpecificity, MultilabelF1Score, MultilabelAccuracy, MultilabelPrecision
 
 class DataloaderIterator:
     def __init__(self, dataloader):
@@ -97,6 +97,24 @@ class ControlledFewShotBatchSampler(FewShotBatchSampler):
             return self.sample_classes
         else:
             return super().get_iteration_classes(it)
+        
+def create_baseline_eval_dataloaders(ds_config, n_ways, n_query):
+    img_info = ds_config.img_info
+    img_path = ds_config.img_path
+    classes_split_map = ds_config.classes_split_map
+    label_names_map = ds_config.label_names_map
+    mean_std = ds_config.mean_std
+
+    query_image_ids, _ = get_query_and_support_ids(img_info, ds_config.training_split_path)
+    train_query_dataset = MDataset(img_path, img_info, query_image_ids, label_names_map, classes_split_map['train'], mean_std=mean_std)
+    val_dataset = _create_dataset(img_path, img_info, label_names_map, classes_split_map, 'val', mean_std)
+    test_dataset = _create_dataset(img_path, img_info, label_names_map, classes_split_map, 'test', mean_std)
+
+    train_query_loader = _create_dataloader(train_query_dataset, n_query, n_ways, n_query=0)
+    val_loader = _create_dataloader(val_dataset, n_query, n_ways, n_query=0)
+    test_loader = _create_dataloader(test_dataset, n_query, n_ways, n_query=0)
+
+    return train_query_loader, val_loader, test_loader
     
 class ControlledMetaTrainer:
     def __init__(self, model, shots, n_ways, dataset_config, train_n_ways=None, n_query=None, device='cpu'):
@@ -158,89 +176,92 @@ class ControlledMetaTrainer:
         self.train_query_dataset.sampler.reset_sample_classes()
         self.train_support_dataset.sampler.reset_sample_classes()
 
-    def update_best_model(self, model):
-        val_loss, val_raw_acc, val_f1, val_auc, val_spec, val_rec = self.run_eval(model, self.val_loader, n_ways=self.train_n_ways)
+    def update_best_model(self, model, num_eval_episodes=None):
+        val_loss, val_raw_acc, val_f1, val_spec, val_rec, val_prec = self.run_eval(model, self.val_loader, n_ways=self.train_n_ways, num_episodes=num_eval_episodes)
         val_acc = 2 * (val_spec * val_rec) /(val_spec + val_rec)
+        print(f"Validation loss {val_loss} | Raw Accuracy {val_raw_acc} | Micro F1 {val_f1} | Accuracy H-Mean {val_acc} | Spec {val_spec} | Recall {val_rec} | Precision {val_prec}")
         if self.best_acc is None or val_acc > self.best_acc:
             self.best_acc = val_acc
             self.best_model = copy.deepcopy(model)
             return True
-        print(f"Validation loss {val_loss} | Raw Accuracy {val_raw_acc} | F1 {val_f1} | Accuracy H-Mean {val_acc} | AUC {val_auc} | Spec {val_spec} ")
 
         return False
 
-    def run_train(self, epochs, lr=1e-5, min_lr=5e-7, lr_change_step=5):
+    def run_train(self, num_episodes, lr=1e-5, min_lr=5e-7, lr_change_step=5, update_interval=20):
         model = self.model.to(self.device)
-        best_epoch = None
+        
         
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
         scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=min_lr, max_lr=lr, cycle_momentum=False, step_size_up=lr_change_step)
 
-        f1_func = MultilabelF1Score(num_labels=self.train_n_ways).to(self.device)
+        loss_meter = AverageMeter()
+        f1_meter = AverageMeter()
+        spec_meter = AverageMeter()
+        f1_func = MultilabelF1Score(num_labels=self.train_n_ways, average='micro').to(self.device)
         spec_func = MultilabelSpecificity(num_labels=self.train_n_ways).to(self.device)
 
         cycler = ClassCycler(len(self.train_query_dataset.classes))
         support_iterator = DataloaderIterator(self.train_support_loader)
-        for epoch in range(epochs):
+        query_iterator = DataloaderIterator(self.train_query_loader)
+        best_epi = None
+        for i in range(num_episodes):
             model.train()
-            loss_meter = AverageMeter()
-            f1_meter = AverageMeter()
-            spec_meter = AverageMeter()
-            query_iterator = DataloaderIterator(self.train_query_loader)
-            for i in range(len(self.train_query_loader)):
-                self._update_train_iteration_classes(cycler.next_n(self.train_n_ways))
+            self._update_train_iteration_classes(cycler.next_n(self.train_n_ways))
 
-                qimages, qclass_inds, train_class_labels = query_iterator.next_batch()
-                qimages, qclass_inds = qimages.to(self.device), qclass_inds.to(self.device)
-                simages, sclass_inds, support_class_labels = support_iterator.next_batch()
-                assert train_class_labels == support_class_labels, f"Mismatch {train_class_labels} {support_class_labels}"
-                simages, sclass_inds = simages.to(self.device), sclass_inds.to(self.device)
+            qimages, qclass_inds, train_class_labels = query_iterator.next_batch()
+            qimages, qclass_inds = qimages.to(self.device), qclass_inds.to(self.device)
+            simages, sclass_inds, support_class_labels = support_iterator.next_batch()
+            assert train_class_labels == support_class_labels, f"Mismatch {train_class_labels} {support_class_labels}"
+            simages, sclass_inds = simages.to(self.device), sclass_inds.to(self.device)
 
-                optimizer.zero_grad()
-                predictions, query_proto = model.update_support_and_classify(train_class_labels, simages, sclass_inds, qimages)
-                loss = model.loss(query_proto, predictions, qclass_inds)
+            optimizer.zero_grad()
+            predictions, query_proto = model.update_support_and_classify(train_class_labels, simages, sclass_inds, qimages)
+            loss = model.loss(query_proto, predictions, qclass_inds)
 
-                f1 = f1_func(predictions, qclass_inds)
-                f1_meter.update(f1.item(), qclass_inds.shape[0])
+            f1 = f1_func(predictions, qclass_inds)
+            f1_meter.update(f1.item(), qclass_inds.shape[0])
 
-                spec = spec_func(predictions, qclass_inds)
-                spec_meter.update(spec.item(), qclass_inds.shape[0])
+            spec = spec_func(predictions, qclass_inds)
+            spec_meter.update(spec.item(), qclass_inds.shape[0])
 
-                loss.backward()
-                optimizer.step()
-                scheduler.step()
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
 
-                loss_meter.update(loss.item(), len(qimages))
-                print(f"Batch {i+1}: Loss {loss.item()} | F1 {f1} | Spec {spec}")
+            loss_meter.update(loss.item(), len(qimages))
+            print(f"Episode {i+1}: Loss {loss.item()} | F1 {f1} | Spec {spec}")
             
-            print(f"Epoch {epoch+1}: Training loss {loss_meter.average()} | F1: {f1_meter.average()} | Spec {spec_meter.average()}")
-            
-            if self.update_best_model(model):
-                best_epoch = epoch
-            self._reset_train_iteration_classes()
-
+            if (i % update_interval) == (update_interval - 1):      
+                if self.update_best_model(model, 30):
+                    best_epi = i
+                
+                print(f"Average Training loss {loss_meter.average()} | Micro F1: {f1_meter.average()} | Spec {spec_meter.average()}")
+                loss_meter.reset()
+                f1_meter.reset()
+                spec_meter.reset()
             
         self.model = model
-        print('Best epoch: ', best_epoch+1)
+        print('Best episode: ', best_epi+1)
     
     def run_eval(self, model, dataloader, verbose=False, n_ways=None, num_episodes=None):
+        if n_ways is None:
+            n_ways = self.n_ways
+
         model.eval()
         model = model.to(self.device)
         
         loss_meter = AverageMeter()
-        auc_meter = AverageMeter()
+        prec_meter = AverageMeter()
         f1_meter = AverageMeter()
         spec_meter = AverageMeter()
         rec_meter = AverageMeter()
         acc_meter = AverageMeter()
 
-        if n_ways is None:
-            n_ways = self.n_ways
-        
         acc_func = MultilabelAccuracy(num_labels=n_ways).to(self.device)
-        f1_func = MultilabelF1Score(num_labels=n_ways).to(self.device)
+        f1_func = MultilabelF1Score(num_labels=n_ways, average='micro').to(self.device)
         specificity_func = MultilabelSpecificity(num_labels=n_ways).to(self.device)
         recall_func = MultilabelRecall(num_labels=n_ways).to(self.device)
+        prec_func = MultilabelPrecision(num_labels=n_ways).to(self.device)
 
         if num_episodes is None:
             num_episodes = len(dataloader)
@@ -258,8 +279,8 @@ class ControlledMetaTrainer:
                 loss = model.loss(query_proto, predictions, qclass_inds)
                 loss_meter.update(loss.item(), qclass_inds.shape[0])
 
-                auc = calculate_auc(predictions, qclass_inds)
-                auc_meter.update(auc, qclass_inds.shape[0])
+                prec = prec_func(predictions, qclass_inds)
+                prec_meter.update(prec.item(), qclass_inds.shape[0])
             
                 f1 = f1_func(predictions, qclass_inds)
                 f1_meter.update(f1.item(), qclass_inds.shape[0])
@@ -276,8 +297,8 @@ class ControlledMetaTrainer:
                     # print(class_labels)
                     # print(torch.nonzero(class_inds)[:,1].bincount())
                     # print(predictions)
-                    print(f"Episode {i+1} | Loss {loss} | F1 {f1} | AUC {auc} | Specificity {spec} | Recall {rec} | Bal Acc {(spec+rec)/2} | Raw Acc {acc}")
-        return loss_meter.average(), acc_meter.average(), f1_meter.average(), auc_meter.average(), spec_meter.average(), rec_meter.average()
+                    print(f"Episode {i+1} | Loss {loss} | F1 {f1} | Specificity {spec} | Recall {rec} |  Precision {prec} | Bal Acc {(spec+rec)/2} | Raw Acc {acc}")
+        return loss_meter.average(), acc_meter.average(), f1_meter.average(), spec_meter.average(), rec_meter.average(), prec_meter.average()
     
 class DynamicMetaTrainer(ControlledMetaTrainer):
     def __init__(self, model, shots, n_ways, dataset_config, train_n_ways=None, n_query=None, device='cpu'):
@@ -318,70 +339,71 @@ class DynamicMetaTrainer(ControlledMetaTrainer):
     def _reset_train_iteration_classes(self):
         self.train_dataset.sampler.reset_sample_classes()
 
-    def run_train(self, epochs, lr=1e-5, min_lr=5e-7, lr_change_step=5):
+    def run_train(self, episodes, lr=1e-5, min_lr=5e-7, lr_change_step=5, update_interval=50):
         model = self.model.to(self.device)
-        best_epoch = None
+        best_epi = None
         
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
         scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=min_lr, max_lr=lr, cycle_momentum=False, step_size_up=lr_change_step)
 
-        f1_func = MultilabelF1Score(num_labels=self.train_n_ways).to(self.device)
+        f1_func = MultilabelF1Score(num_labels=self.train_n_ways, average='micro').to(self.device)
         spec_func = MultilabelSpecificity(num_labels=self.train_n_ways).to(self.device)
         rec_func = MultilabelRecall(num_labels=self.train_n_ways).to(self.device)
 
         cycler = ClassCycler(len(self.train_dataset.classes))
-        print(len(self.train_loader))
-        for epoch in range(epochs):
+        loss_meter = AverageMeter()
+        f1_meter = AverageMeter()
+        spec_meter = AverageMeter()
+        rec_meter = AverageMeter()
+
+        n_ways = self.train_n_ways
+        s_size = self.shots * n_ways
+        tr_iterator = DataloaderIterator(self.train_loader)
+
+        for i in range(episodes):
             model.train()
 
-            loss_meter = AverageMeter()
-            f1_meter = AverageMeter()
-            spec_meter = AverageMeter()
-            rec_meter = AverageMeter()
-
-            n_ways = self.train_n_ways
-            s_size = self.shots * n_ways
-            tr_iterator = DataloaderIterator(self.train_loader)
-            for i in range(len(self.train_loader)):
-                self._update_train_iteration_classes(cycler.next_n(n_ways))
-                
-                images, class_inds, class_labels = tr_iterator.next_batch()
-
-                simages, qimages = images[:s_size, :, :].to(self.device), images[s_size:, :, :].to(self.device)
-                sclass_inds, qclass_inds = class_inds[:s_size, :].to(self.device), class_inds[s_size:, :].to(self.device)
-                
-                optimizer.zero_grad()
-                predictions, query_proto = model.update_support_and_classify(class_labels, simages, sclass_inds, qimages)
-                loss = model.loss(query_proto, predictions, qclass_inds)
-
-                f1 = f1_func(predictions, qclass_inds)
-                f1_meter.update(f1.item(), qclass_inds.shape[0])
-
-                spec = spec_func(predictions, qclass_inds)
-                spec_meter.update(spec.item(), qclass_inds.shape[0])
-
-                rec = rec_func(predictions, qclass_inds)
-                rec_meter.update(rec.item(), qclass_inds.shape[0])
-
-                loss.backward()
-                optimizer.step()
-                scheduler.step()
-
-                loss_meter.update(loss.item(), len(qimages))
-                print(f"Batch {i+1}: Loss {loss.item()} | F1 {f1} | Spec {spec} | Recall {rec}")
-
-                if (i % 100) == 90:
-                    self.update_best_model(model)
-
-            print(f"Epoch {epoch+1}: Training loss {loss_meter.average()} | F1: {f1_meter.average()} | Spec {spec_meter.average()} | Recall {rec_meter.average()}")
+            self._update_train_iteration_classes(cycler.next_n(n_ways))
             
-            if self.update_best_model(model):
-                best_epoch = epoch
+            images, class_inds, class_labels = tr_iterator.next_batch()
+
+            simages, qimages = images[:s_size, :, :].to(self.device), images[s_size:, :, :].to(self.device)
+            sclass_inds, qclass_inds = class_inds[:s_size, :].to(self.device), class_inds[s_size:, :].to(self.device)
+            
+            optimizer.zero_grad()
+            predictions, query_proto = model.update_support_and_classify(class_labels, simages, sclass_inds, qimages)
+            loss = model.loss(query_proto, predictions, qclass_inds)
+
+            f1 = f1_func(predictions, qclass_inds)
+            f1_meter.update(f1.item(), qclass_inds.shape[0])
+
+            spec = spec_func(predictions, qclass_inds)
+            spec_meter.update(spec.item(), qclass_inds.shape[0])
+
+            rec = rec_func(predictions, qclass_inds)
+            rec_meter.update(rec.item(), qclass_inds.shape[0])
+
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+
+            loss_meter.update(loss.item(), len(qimages))
+            print(f"Episode {i+1}: Loss {loss.item()} | Micro F1 {f1} | Spec {spec} | Recall {rec}")
+
+            if (i % update_interval) == (update_interval-1):
+                if self.update_best_model(model, 40):           
+                    best_epi = i
+
+                print(f"Average Training loss {loss_meter.average()} | Micro F1: {f1_meter.average()} | Spec {spec_meter.average()} | Recall {rec_meter.average()}")
+                loss_meter.reset()
+                f1_meter.reset()
+                spec_meter.reset()
+                rec_meter.reset()
             
             self._reset_train_iteration_classes()
             
         self.model = model
-        print('Best epoch: ', best_epoch+1)
+        print('Best episode: ', best_epi+1)
     
 def _collate_batch(batch):
     images, class_inds, labels = [], [], []

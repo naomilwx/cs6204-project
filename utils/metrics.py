@@ -34,8 +34,14 @@ def multilabel_logit_accuracy(output, target):
     # Returns the average accuracy across classes    
     # Target is 1 at indices where class label is true
     # Output should be higher at indices where class label is true
-    pred = output.sigmoid().round()
-    correct = pred.eq(target)
+    pred = output.sigmoid()
+    return multilabel_accuracy(pred, target)
+
+def multilabel_accuracy(pred, target):
+    # Returns the average accuracy across classes    
+    # Target is 1 at indices where class label is true
+    # Output should be higher at indices where class label is true
+    correct = pred.round().eq(target)
     return correct.float().sum().item()/target.numel()
 
 def calculate_auc(y_score, y_true):
