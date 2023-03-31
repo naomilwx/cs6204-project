@@ -35,6 +35,7 @@ class MetaModelWithAttention(MetaModelBase):
         support_prototypes = self.attn_model(text_embeddings, image_embeddings)
 
         self.class_label_embeddings = text_embeddings
+        # print(support_prototypes.shape, support_label_inds.shape)
         self.class_prototypes = self.class_prototype_aggregator(support_prototypes, support_label_inds)
         if self.use_variance:
             self.class_prototypes_var = class_variance(support_prototypes, support_label_inds)

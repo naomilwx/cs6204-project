@@ -296,7 +296,7 @@ class DynamicMetaTrainer(ControlledMetaTrainer):
         self.test_dataset = _create_dataset(img_path, img_info, label_names_map, classes_split_map, 'test', mean_std)
 
     def initialise_dataloaders(self):
-        self.train_loader = _create_dataloader(self.train_query_dataset, self.n_query, self.train_n_ways, n_query=self.n_query)
+        self.train_loader = _create_dataloader(self.train_dataset, self.shots, self.train_n_ways, n_query=self.n_query)
         self.val_loader = _create_dataloader(self.val_dataset, self.shots, self.n_ways, n_query=self.n_query)
         self.test_loader = _create_dataloader(self.test_dataset, self.shots, self.n_ways, n_query=self.n_query)
 
@@ -316,26 +316,29 @@ class DynamicMetaTrainer(ControlledMetaTrainer):
 
         f1_func = MultilabelF1Score(num_labels=self.train_n_ways).to(self.device)
         spec_func = MultilabelSpecificity(num_labels=self.train_n_ways).to(self.device)
+        rec_func = MultilabelRecall(num_labels=self.train_n_ways).to(self.device)
 
         cycler = ClassCycler(len(self.train_dataset.classes))
+        print(len(self.train_loader))
         for epoch in range(epochs):
             model.train()
 
             loss_meter = AverageMeter()
             f1_meter = AverageMeter()
             spec_meter = AverageMeter()
+            rec_meter = AverageMeter()
 
             n_ways = self.train_n_ways
-            for i, (images, class_inds, class_labels) in enumerate(self.train_loader):
+            s_size = self.shots * n_ways
+            tr_iterator = DataloaderIterator(self.train_loader)
+            for i in range(len(self.train_loader)):
                 self._update_train_iteration_classes(cycler.next_n(n_ways))
-
-                s_size = self.shots * n_ways
-                simages, qimages = images[:s_size,:,:].to(self.device), images[s_size:,:,:].to(self.device)
-                sclass_inds, qclass_inds = class_inds[:s_size,:].to(self.device), class_inds[s_size:,:].to(self.device)
                 
-                
-                simages, sclass_inds = simages.to(self.device), sclass_inds.to(self.device)
+                images, class_inds, class_labels = tr_iterator.next_batch()
 
+                simages, qimages = images[:s_size, :, :].to(self.device), images[s_size:, :, :].to(self.device)
+                sclass_inds, qclass_inds = class_inds[:s_size, :].to(self.device), class_inds[s_size:, :].to(self.device)
+                
                 optimizer.zero_grad()
                 predictions, query_proto = model.update_support_and_classify(class_labels, simages, sclass_inds, qimages)
                 loss = model.loss(query_proto, predictions, qclass_inds)
@@ -346,14 +349,17 @@ class DynamicMetaTrainer(ControlledMetaTrainer):
                 spec = spec_func(predictions, qclass_inds)
                 spec_meter.update(spec.item(), qclass_inds.shape[0])
 
+                rec = rec_func(predictions, qclass_inds)
+                rec_meter.update(rec.item(), qclass_inds.shape[0])
+
                 loss.backward()
                 optimizer.step()
                 scheduler.step()
 
                 loss_meter.update(loss.item(), len(qimages))
-                print(f"Batch {i+1}: Loss {loss.item()} | F1 {f1} | Spec {spec}")
+                print(f"Batch {i+1}: Loss {loss.item()} | F1 {f1} | Spec {spec} | Recall {rec}")
             
-            print(f"Epoch {epoch+1}: Training loss {loss_meter.average()} | F1: {f1_meter.average()} | Spec {spec_meter.average()}")
+            print(f"Epoch {epoch+1}: Training loss {loss_meter.average()} | F1: {f1_meter.average()} | Spec {spec_meter.average()} | Recall {rec_meter.average()}")
             val_loss, val_raw_acc, val_f1, val_auc, val_spec, val_rec = self.run_eval(model, self.val_loader, n_ways=self.train_n_ways)
             val_acc = 2 * (val_spec * val_rec) /(val_spec + val_rec)
             print(f"Epoch {epoch+1}: Validation loss {val_loss} | Raw Accuracy {val_raw_acc} | F1 {val_f1} | Accuracy H-Mean {val_acc} | AUC {val_auc} | Spec {spec} ")

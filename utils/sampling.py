@@ -105,7 +105,7 @@ class FewShotBatchSampler(Sampler):
                 size_query  =  self.n_ways * self.n_query
                 if len(query_list) < size_query:
                     selected = np.random.choice(list(all_indices - batch), size_query - len(query_list), replace=False)
-                    support_list.extend(selected)
+                    query_list.extend(selected)
                     batch.update(selected)
                 yield(support_list+query_list)
             else:

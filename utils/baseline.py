@@ -2,7 +2,7 @@ import torch
 from utils.metrics import AverageMeter, calculate_auc, multilabel_logit_accuracy
 from torchmetrics.classification import MultilabelRecall, MultilabelSpecificity, MultilabelPrecision, MultilabelF1Score
 
-def run_random_eval(dataloader, num_labels, device):
+def run_baseline_eval(dataloader, num_labels, device, baseline_type='rand'):
     auc_meter = AverageMeter()
     acc_meter = AverageMeter()
     spec_meter = AverageMeter()
@@ -17,7 +17,12 @@ def run_random_eval(dataloader, num_labels, device):
          for _, class_inds in dataloader:
                 class_inds = class_inds.to(device)
 
-                probs = torch.rand(class_inds.shape[0], num_labels, device=device)
+                if baseline_type == 'rand':
+                    probs = torch.rand(class_inds.shape[0], num_labels, device=device)
+                elif baseline_type == 'pos':
+                    probs = torch.ones(class_inds.shape[0], num_labels, device=device)
+                else:
+                    probs = torch.zeros(class_inds.shape[0], num_labels, device=device)
                 
                 f1 = f1_func(probs, class_inds)
                 f1_meter.update(f1.item(), len(class_inds))
