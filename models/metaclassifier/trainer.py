@@ -158,6 +158,17 @@ class ControlledMetaTrainer:
         self.train_query_dataset.sampler.reset_sample_classes()
         self.train_support_dataset.sampler.reset_sample_classes()
 
+    def update_best_model(self, model):
+        val_loss, val_raw_acc, val_f1, val_auc, val_spec, val_rec = self.run_eval(model, self.val_loader, n_ways=self.train_n_ways)
+        val_acc = 2 * (val_spec * val_rec) /(val_spec + val_rec)
+        if self.best_acc is None or val_acc > self.best_acc:
+            self.best_acc = val_acc
+            self.best_model = copy.deepcopy(model)
+            return True
+        print(f"Validation loss {val_loss} | Raw Accuracy {val_raw_acc} | F1 {val_f1} | Accuracy H-Mean {val_acc} | AUC {val_auc} | Spec {val_spec} ")
+
+        return False
+
     def run_train(self, epochs, lr=1e-5, min_lr=5e-7, lr_change_step=5):
         model = self.model.to(self.device)
         best_epoch = None
@@ -203,20 +214,16 @@ class ControlledMetaTrainer:
                 print(f"Batch {i+1}: Loss {loss.item()} | F1 {f1} | Spec {spec}")
             
             print(f"Epoch {epoch+1}: Training loss {loss_meter.average()} | F1: {f1_meter.average()} | Spec {spec_meter.average()}")
-            val_loss, val_raw_acc, val_f1, val_auc, val_spec, val_rec = self.run_eval(model, self.val_loader, n_ways=self.train_n_ways)
-            val_acc = 2 * (val_spec * val_rec) /(val_spec + val_rec)
-            print(f"Epoch {epoch+1}: Validation loss {val_loss} | Raw Accuracy {val_raw_acc} | F1 {val_f1} | Accuracy H-Mean {val_acc} | AUC {val_auc} | Spec {spec} ")
-
+            
+            if self.update_best_model(model):
+                best_epoch = epoch
             self._reset_train_iteration_classes()
 
-            if self.best_acc is None or val_acc > self.best_acc:
-                self.best_acc = val_acc
-                self.best_model = copy.deepcopy(model)
-                best_epoch = epoch
+            
         self.model = model
         print('Best epoch: ', best_epoch+1)
     
-    def run_eval(self, model, dataloader, verbose=False, n_ways=None):
+    def run_eval(self, model, dataloader, verbose=False, n_ways=None, num_episodes=None):
         model.eval()
         model = model.to(self.device)
         
@@ -235,8 +242,13 @@ class ControlledMetaTrainer:
         specificity_func = MultilabelSpecificity(num_labels=n_ways).to(self.device)
         recall_func = MultilabelRecall(num_labels=n_ways).to(self.device)
 
+        if num_episodes is None:
+            num_episodes = len(dataloader)
+
         with torch.no_grad():
-            for images, class_inds, class_labels in dataloader:
+            iterator = DataloaderIterator(dataloader)
+            for i in range(num_episodes):
+                images, class_inds, class_labels = iterator.next_batch()
                 s_size = self.shots * n_ways
                 simages, qimages = images[:s_size,:,:].to(self.device), images[s_size:,:,:].to(self.device)
                 sclass_inds, qclass_inds = class_inds[:s_size,:].to(self.device), class_inds[s_size:,:].to(self.device)
@@ -264,7 +276,7 @@ class ControlledMetaTrainer:
                     # print(class_labels)
                     # print(torch.nonzero(class_inds)[:,1].bincount())
                     # print(predictions)
-                    print(f"Loss {loss} | F1 {f1} | AUC {auc} | Specificity {spec} | Recall {rec} | Bal Acc {(spec+rec)/2} | Raw Acc {acc}")
+                    print(f"Episode {i+1} | Loss {loss} | F1 {f1} | AUC {auc} | Specificity {spec} | Recall {rec} | Bal Acc {(spec+rec)/2} | Raw Acc {acc}")
         return loss_meter.average(), acc_meter.average(), f1_meter.average(), auc_meter.average(), spec_meter.average(), rec_meter.average()
     
 class DynamicMetaTrainer(ControlledMetaTrainer):
@@ -305,7 +317,6 @@ class DynamicMetaTrainer(ControlledMetaTrainer):
 
     def _reset_train_iteration_classes(self):
         self.train_dataset.sampler.reset_sample_classes()
-
 
     def run_train(self, epochs, lr=1e-5, min_lr=5e-7, lr_change_step=5):
         model = self.model.to(self.device)
@@ -358,18 +369,17 @@ class DynamicMetaTrainer(ControlledMetaTrainer):
 
                 loss_meter.update(loss.item(), len(qimages))
                 print(f"Batch {i+1}: Loss {loss.item()} | F1 {f1} | Spec {spec} | Recall {rec}")
-            
+
+                if (i % 100) == 90:
+                    self.update_best_model(model)
+
             print(f"Epoch {epoch+1}: Training loss {loss_meter.average()} | F1: {f1_meter.average()} | Spec {spec_meter.average()} | Recall {rec_meter.average()}")
-            val_loss, val_raw_acc, val_f1, val_auc, val_spec, val_rec = self.run_eval(model, self.val_loader, n_ways=self.train_n_ways)
-            val_acc = 2 * (val_spec * val_rec) /(val_spec + val_rec)
-            print(f"Epoch {epoch+1}: Validation loss {val_loss} | Raw Accuracy {val_raw_acc} | F1 {val_f1} | Accuracy H-Mean {val_acc} | AUC {val_auc} | Spec {spec} ")
-
-            self._reset_train_iteration_classes()
-
-            if self.best_acc is None or val_acc > self.best_acc:
-                self.best_acc = val_acc
-                self.best_model = copy.deepcopy(model)
+            
+            if self.update_best_model(model):
                 best_epoch = epoch
+            
+            self._reset_train_iteration_classes()
+            
         self.model = model
         print('Best epoch: ', best_epoch+1)
     
