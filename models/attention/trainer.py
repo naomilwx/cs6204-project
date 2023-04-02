@@ -22,6 +22,8 @@ class Trainer:
 
         if encoder_only:
             model.attention.set_trainable(False)
+        else:
+            model.attention.set_trainable(True)
         
         scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=min_lr, max_lr=lr, cycle_momentum=False, step_size_up=10)
 

@@ -4,11 +4,11 @@ from utils.contrastive_loss import SupConLoss
 from abc import abstractmethod
 
 def image_text_logits(text_embeddings, prototypes, scale=1):
-    # text_embeddings: (14, 512) x prototypes: (140, 14, 512) -> (140, 14)
+    # text_embeddings: (L, D) x prototypes: (N, L, D) -> (N, L)
     fac = text_embeddings.unsqueeze(0).expand_as(prototypes)
-
+    # (N, L)
     return (fac * prototypes).sum(axis=2) * scale
-    
+
 class BaseLabelImageAttention(nn.Module):
     def __init__(self,  temperature=1, cls_weight=1, cls_loss=nn.BCEWithLogitsLoss()) -> None:
         super().__init__()
@@ -24,9 +24,9 @@ class BaseLabelImageAttention(nn.Module):
         for param in self.attn.parameters():
             param.requires_grad = trainable
 
-    def image_text_logits(self, text_embedings, images, label_inds=None):
+    def image_text_logits(self, text_embedings, images, label_inds=None, scale=1):
         prototypes = self.forward(text_embedings, images, label_inds)
-        return image_text_logits(text_embedings, prototypes)
+        return image_text_logits(text_embedings, prototypes, scale=scale)
     
     def loss(self, text_embeddings, prototypes, label_inds):
         logits = image_text_logits(text_embeddings, prototypes)
@@ -89,8 +89,6 @@ class LabelImageAttention(BaseLabelImageAttention):
         # Output: (N, L, D)
         out = self.attn(images, text_embeddings, tgt_key_padding_mask=mask)
         return out / out.norm(dim=-1, keepdim=True)
-
-
 
 class LabelImagePrototypeModel(nn.Module):
     def __init__(self, encoder, n_head, dim_in=512, dropout=0.1, num_layers=6, temperature=1, cls_weight=1, cls_loss=nn.CrossEntropyLoss(), attn_model=None):

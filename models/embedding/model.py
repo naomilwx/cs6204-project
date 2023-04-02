@@ -119,6 +119,7 @@ class ImageTextEmbedding(nn.Module):
             logits_per_text = logits_per_image.permute(0,1,3,2) # HxWxBxN
         else:
             logits_per_text = logits_per_image.t()
+        # (L, N), (N, L)
         return logits_per_text, logits_per_image
         
     def forward(self, text, img, pool=False):

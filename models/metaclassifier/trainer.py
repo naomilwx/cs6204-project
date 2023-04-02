@@ -275,7 +275,6 @@ class ControlledMetaTrainer:
                 sclass_inds, qclass_inds = class_inds[:s_size,:].to(self.device), class_inds[s_size:,:].to(self.device)
 
                 predictions, query_proto = model.update_support_and_classify(class_labels, simages, sclass_inds, qimages)
-
                 loss = model.loss(query_proto, predictions, qclass_inds)
                 loss_meter.update(loss.item(), qclass_inds.shape[0])
 
@@ -299,20 +298,11 @@ class ControlledMetaTrainer:
                     # print(predictions)
                     print(f"Episode {i+1} | Loss {loss} | F1 {f1} | Specificity {spec} | Recall {rec} |  Precision {prec} | Bal Acc {(spec+rec)/2} | Raw Acc {acc}")
         return loss_meter.average(), acc_meter.average(), f1_meter.average(), spec_meter.average(), rec_meter.average(), prec_meter.average()
+
     
 class DynamicMetaTrainer(ControlledMetaTrainer):
     def __init__(self, model, shots, n_ways, dataset_config, train_n_ways=None, n_query=None, device='cpu'):
         super().__init__(model, shots, n_ways, dataset_config, train_n_ways=train_n_ways, n_query=n_query, device=device)
-
-    def create_query_eval_dataloader(self, split_type='train'):
-        img_info = self.dataset_config.img_info
-        img_path = self.dataset_config.img_path
-        classes_split_map = self.dataset_config.classes_split_map
-        label_names_map = self.dataset_config.label_names_map
-        mean_std = self.dataset_config.mean_std
-
-        query_dataset = MDataset(img_path, img_info, self.query_image_ids, label_names_map, classes_split_map[split_type], mean_std=mean_std)
-        return _create_dataloader(query_dataset, self.shots, self.n_ways, n_query=self.n_query)
 
     def initialise_datasets(self, ds_config):
         img_info = ds_config.img_info
@@ -339,7 +329,9 @@ class DynamicMetaTrainer(ControlledMetaTrainer):
     def _reset_train_iteration_classes(self):
         self.train_dataset.sampler.reset_sample_classes()
 
-    def run_train(self, episodes, lr=1e-5, min_lr=5e-7, lr_change_step=5, update_interval=50):
+    def run_train(self, episodes, lr=1e-5, min_lr=5e-7, lr_change_step=5, update_interval=50, train_dataloader=None):
+        if train_dataloader is None:
+            train_dataloader = self.train_loader
         model = self.model.to(self.device)
         best_epi = None
         
@@ -358,7 +350,7 @@ class DynamicMetaTrainer(ControlledMetaTrainer):
 
         n_ways = self.train_n_ways
         s_size = self.shots * n_ways
-        tr_iterator = DataloaderIterator(self.train_loader)
+        tr_iterator = DataloaderIterator(train_dataloader)
 
         for i in range(episodes):
             model.train()
@@ -404,6 +396,24 @@ class DynamicMetaTrainer(ControlledMetaTrainer):
             
         self.model = model
         print('Best episode: ', best_epi+1)
+
+class MDynamicMetaTrainer(DynamicMetaTrainer):
+    def __init__(self, model, shots, n_ways, dataset_config, train_n_ways=None, n_query=None, device='cpu'):
+        super().__init__(model, shots, n_ways, dataset_config, train_n_ways=train_n_ways, n_query=n_query, device=device)
+
+    def initialise_datasets(self, ds_config):
+        img_info = ds_config.img_info
+        img_path = ds_config.img_path
+        classes_split_map = ds_config.classes_split_map
+        label_names_map = ds_config.label_names_map
+        mean_std = ds_config.mean_std
+
+        query_image_ids, support_image_ids = get_query_and_support_ids(img_info, ds_config.training_split_path)
+        self.query_image_ids = query_image_ids
+
+        self.train_dataset = MDataset(img_path, img_info, support_image_ids, label_names_map, classes_split_map['train'], mean_std=mean_std)
+        self.val_dataset = _create_dataset(img_path, img_info, label_names_map, classes_split_map, 'val', mean_std)
+        self.test_dataset = _create_dataset(img_path, img_info, label_names_map, classes_split_map, 'test', mean_std)
     
 def _collate_batch(batch):
     images, class_inds, labels = [], [], []

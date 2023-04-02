@@ -25,6 +25,12 @@ def cosine_distance(prototype, query):
     # should return a value in [0, 2]
     return 1 - cosine_similarity(prototype, query)
 
+def image_prototype_logits(prototypes, image_embeddings, scale=1):
+    # prototypes: (L, D) x image_embeddings: (N, L, D) -> (N, L)
+    # fac = prototypes.unsqueeze(0).expand_as(image_embeddings)
+    # (fac * image_embeddings).sum(axis=2)
+    return cosine_similarity(prototypes, image_embeddings) * scale
+
 class MetaModelBase(nn.Module):
     def __init__(self, imgtxt_encoder, class_prototype_aggregator):
         super().__init__()

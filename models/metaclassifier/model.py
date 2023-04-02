@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-from models.metaclassifier.base import MetaModelBase
+from models.metaclassifier.base import MetaModelBase, image_prototype_logits
 from utils.prototype import class_variance
 from utils.f1_loss import BalAccuracyLoss
 
@@ -80,6 +80,9 @@ class ProtoNetAttention(MetaModelWithAttention):
         self.scale = nn.Parameter(torch.tensor(scale))
         self.loss_fn = BalAccuracyLoss(logits=False)
 
+    def reset_scale(self):
+        self.scale = nn.Parameter(torch.tensor(1.0))
+    
     def get_scale(self):
         self.scale.data = torch.clamp(self.scale.data, 1e-5)
         return self.scale
@@ -90,3 +93,21 @@ class ProtoNetAttention(MetaModelWithAttention):
         probabilities = (-self.distance_func(self.class_prototypes, query_prototypes) * self.get_scale()).exp()
 
         return probabilities, query_prototypes
+    
+class DotProtoNetAttention(MetaModelWithAttention):
+    def __init__(self, imgtxt_encoder, attn_model, class_prototype_aggregator, scale=1.0, bias=-1e-3):
+        super(DotProtoNetAttention, self).__init__(imgtxt_encoder, attn_model, class_prototype_aggregator)
+        self.scale = nn.Parameter(torch.tensor(scale))
+        self.bias = nn.Parameter(torch.tensor(bias))
+        self.loss_fn = BalAccuracyLoss(logits=True)
+
+    def get_scale(self):
+        self.scale.data = torch.clamp(self.scale.data, 1e-5)
+        return self.scale
+
+    def forward(self, query_images):
+        query_image_embeddings = self.encoder.embed_image(query_images, pool=False)
+        query_prototypes = self.attn_model(self.class_label_embeddings, query_image_embeddings)
+        logits = image_prototype_logits(self.class_prototypes, query_prototypes, self.get_scale()) + self.bias
+
+        return logits, query_prototypes
