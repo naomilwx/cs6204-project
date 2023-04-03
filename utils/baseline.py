@@ -1,6 +1,6 @@
 import torch
 from utils.metrics import AverageMeter, multilabel_accuracy
-from torchmetrics.classification import MultilabelRecall, MultilabelSpecificity, MultilabelPrecision, MultilabelF1Score, MultiLabelAccuracy
+from torchmetrics.classification import MultilabelRecall, MultilabelSpecificity, MultilabelPrecision, MultilabelF1Score, MultilabelAccuracy
 
 from models.attention.model import image_text_logits
 from models.metaclassifier.trainer import DataloaderIterator
@@ -35,7 +35,7 @@ def run_baseline_eval(dataloader, num_labels, device, baseline_type='rand', epis
                 f1 = f1_func(probs, class_inds)
                 f1_meter.update(f1.item(), len(class_inds))
             
-                acc_meter.update(acc, len(class_inds))
+                acc_meter.update(acc.item(), len(class_inds))
 
                 spec = specificity(probs, class_inds)
                 spec_meter.update(spec.item(), len(class_inds))
@@ -43,7 +43,7 @@ def run_baseline_eval(dataloader, num_labels, device, baseline_type='rand', epis
                 rec_meter.update(rec.item(), len(class_inds))
                 prec = precision(probs, class_inds)
                 prec_meter.update(prec.item(), len(class_inds))
-                print(f"Episode {i+1} | Raw Acc {acc} | F1 {f1} | Specificity {spec} | Recall {rec} | Precision {prec}")
+                print(f"Episode {i+1} | Raw Acc {acc} | F1 {f1} | Specificity {spec} | Recall {rec} | Precision {prec} | Bal Acc {(spec+rec)/2}")
             
     return acc_meter.average(), f1_meter.average(), spec_meter.average(), rec_meter.average(),  prec_meter.average()
 
@@ -58,7 +58,7 @@ def run_attention_zeroshot_eval(model, dataloader, num_labels, device,episodes=4
     f1_meter = AverageMeter()
     prec_meter = AverageMeter()
 
-    acc_func = MultiLabelAccuracy(num_labels=num_labels).to(device)
+    acc_func = MultilabelAccuracy(num_labels=num_labels).to(device)
     specificity = MultilabelSpecificity(num_labels=num_labels).to(device)
     recall = MultilabelRecall(num_labels=num_labels).to(device)
     f1_func = MultilabelF1Score(num_labels=num_labels, average='micro').to(device)
@@ -78,7 +78,7 @@ def run_attention_zeroshot_eval(model, dataloader, num_labels, device,episodes=4
                 f1_meter.update(f1.item(), len(class_inds))
             
                 acc = acc_func(logits_per_image, class_inds)
-                acc_meter.update(acc, len(class_inds))
+                acc_meter.update(acc.item(), len(class_inds))
 
                 spec = specificity(logits_per_image, class_inds)
                 spec_meter.update(spec.item(), len(class_inds))
@@ -88,7 +88,7 @@ def run_attention_zeroshot_eval(model, dataloader, num_labels, device,episodes=4
                 prec = prec_func(logits_per_image, class_inds)
                 prec_meter.update(prec.item(), len(class_inds))
 
-                print(f"Episode {i+1} | Raw Acc {acc} | F1 {f1} | Specificity {spec} | Recall {rec} | Precision {prec}")
+                print(f"Episode {i+1} | Raw Acc {acc} | F1 {f1} | Specificity {spec} | Recall {rec} | Precision {prec} | Bal Acc {(spec+rec)/2}")
                 
     return acc_meter.average(), f1_meter.average(), spec_meter.average(), rec_meter.average(),  prec_meter.average()
 
@@ -103,7 +103,7 @@ def run_img_txt_zeroshot_eval(model, dataloader, num_labels, device, episodes=50
     f1_meter = AverageMeter()
     prec_meter = AverageMeter()
 
-    acc_func = MultiLabelAccuracy(num_labels=num_labels).to(device)
+    acc_func = MultilabelAccuracy(num_labels=num_labels).to(device)
     specificity = MultilabelSpecificity(num_labels=num_labels).to(device)
     recall = MultilabelRecall(num_labels=num_labels).to(device)
     f1_func = MultilabelF1Score(num_labels=num_labels, average='micro').to(device)
@@ -121,7 +121,7 @@ def run_img_txt_zeroshot_eval(model, dataloader, num_labels, device, episodes=50
             f1_meter.update(f1.item(), len(class_inds))
         
             acc = acc_func(logits_per_image, class_inds)
-            acc_meter.update(acc, len(class_inds))
+            acc_meter.update(acc.item(), len(class_inds))
 
             spec = specificity(logits_per_image, class_inds)
             spec_meter.update(spec.item(), len(class_inds))
@@ -131,6 +131,6 @@ def run_img_txt_zeroshot_eval(model, dataloader, num_labels, device, episodes=50
             prec = prec_func(logits_per_image, class_inds)
             prec_meter.update(prec.item(), len(class_inds))
         
-            print(f"Episode {i+1} | Raw Acc {acc} | F1 {f1} | Specificity {spec} | Recall {rec} | Precision {prec}")
+            print(f"Episode {i+1} | Raw Acc {acc} | F1 {f1} | Specificity {spec} | Recall {rec} | Precision {prec} | Bal Acc {(spec+rec)/2}")
             
     return acc_meter.average(), f1_meter.average(), spec_meter.average(), rec_meter.average(),  prec_meter.average()
