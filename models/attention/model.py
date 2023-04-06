@@ -42,7 +42,7 @@ class BaseLabelImageAttention(nn.Module):
         # results: (N, L, D), labels: (N, L)
         classes = torch.nonzero(label_inds)[:,1] # (Np,)
         prototypes = results[label_inds.bool()] # (Np, D)
-        return self.con_loss(prototypes.unsqueeze(1), classes)
+        return self.con_loss(prototypes.unsqueeze(1), labels=classes)
     
 class LabelImageMHAttention(BaseLabelImageAttention):
     def __init__(self, dim_in, n_head, device='cpu', dropout=0.1, temperature=1, cls_weight=1, cls_loss=nn.BCEWithLogitsLoss()):
@@ -119,5 +119,15 @@ class LabelImagePrototypeModel(nn.Module):
         # N, L, D
         mask = label_inds.unsqueeze(-1).repeat(1, 1, prototypes.shape[2])
         prototypes = mask * prototypes
-        logits_per_image = image_text_logits(text_embeddings, prototypes, self.encoder.get_logit_scale())
+        logits_per_image = image_text_logits(text_embeddings, prototypes, self.encoder.get_logit_scale()) # (N, L)
         return self.encoder.contrastive_logit_loss(logits_per_image.t(), logits_per_image, label_inds)
+    
+    def encoder_loss1(self, text_embeddings, prototypes, label_inds):
+        # label_inds: (N, L)
+        # N, L, D
+        classes = torch.nonzero(label_inds)[:,1] # (Np,)
+        class_prototypes = prototypes[label_inds.bool()] # (Np, D)
+
+        labels = nn.functional.one_hot(classes)
+
+        return self.encoder.loss(text_embeddings, class_prototypes, labels)

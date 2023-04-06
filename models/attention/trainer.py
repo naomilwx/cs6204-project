@@ -11,7 +11,7 @@ class Trainer:
         self.class_labels = class_labels
         self.best_acc = None
     
-    def run_train(self, epochs, dataloader, val_dataloader, lr=1e-4, min_lr=1e-6, full_training=False, encoder_only=False, enc_weight=0.5):
+    def run_train(self, epochs, dataloader, val_dataloader, lr=1e-4, min_lr=1e-6, full_training=False, encoder_only=False, enc_weight=0.05):
         model = self.model.to(self.device)
         best_epoch = None
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
@@ -40,7 +40,7 @@ class Trainer:
                 else:
                     loss = model.attention_loss(text_embeddings, prototypes, class_inds)
                 
-                if full_training:
+                if full_training or enc_weight > 0:
                     loss += enc_weight * model.encoder_loss(text_embeddings, prototypes, class_inds)
 
                 loss.backward()

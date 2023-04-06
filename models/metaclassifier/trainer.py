@@ -13,7 +13,7 @@ from utils.sampling import FewShotBatchSampler, ClassCycler
 from utils.image import CenterRatioCrop
 from utils.data import get_query_and_support_ids
 
-from torchmetrics.classification import MultilabelRecall, MultilabelSpecificity, MultilabelF1Score, MultilabelAccuracy, MultilabelPrecision
+from torchmetrics.classification import MultilabelRecall, MultilabelSpecificity, MultilabelF1Score, MultilabelAccuracy, MultilabelPrecision, MultilabelAveragePrecision
 
 class DataloaderIterator:
     def __init__(self, dataloader):
@@ -266,6 +266,10 @@ class ControlledMetaTrainer:
         if num_episodes is None:
             num_episodes = len(dataloader)
 
+        if verbose:
+            ap_meter = AverageMeter()
+            ap_func = MultilabelAveragePrecision(num_labels=n_ways).to(self.device)
+
         with torch.no_grad():
             iterator = DataloaderIterator(dataloader)
             for i in range(num_episodes):
@@ -273,7 +277,6 @@ class ControlledMetaTrainer:
                 s_size = self.shots * n_ways
                 simages, qimages = images[:s_size,:,:].to(self.device), images[s_size:,:,:].to(self.device)
                 sclass_inds, qclass_inds = class_inds[:s_size,:].to(self.device), class_inds[s_size:,:].to(self.device)
-
                 predictions, query_proto = model.update_support_and_classify(class_labels, simages, sclass_inds, qimages)
                 loss = model.loss(query_proto, predictions, qclass_inds)
                 loss_meter.update(loss.item(), qclass_inds.shape[0])
@@ -296,7 +299,12 @@ class ControlledMetaTrainer:
                     # print(class_labels)
                     # print(torch.nonzero(class_inds)[:,1].bincount())
                     # print(predictions)
-                    print(f"Episode {i+1} | Loss {loss} | F1 {f1} | Specificity {spec} | Recall {rec} |  Precision {prec} | Bal Acc {(spec+rec)/2} | Raw Acc {acc}")
+                    ap = ap_func(predictions, qclass_inds)
+                    ap_meter.update(ap.item(), qclass_inds.shape[0])
+                    print(f"Episode {i+1} | Loss {loss} | F1 {f1} | Specificity {spec} | Recall {rec} |  Precision {prec} | Bal Acc {(spec+rec)/2} | Raw Acc {acc} | AP {ap}")
+        if verbose:
+            return loss_meter.average(), acc_meter.average(), f1_meter.average(), spec_meter.average(), rec_meter.average(), prec_meter.average(), ap_meter.average()
+        
         return loss_meter.average(), acc_meter.average(), f1_meter.average(), spec_meter.average(), rec_meter.average(), prec_meter.average()
 
     
@@ -358,10 +366,9 @@ class DynamicMetaTrainer(ControlledMetaTrainer):
             self._update_train_iteration_classes(cycler.next_n(n_ways))
             
             images, class_inds, class_labels = tr_iterator.next_batch()
-
             simages, qimages = images[:s_size, :, :].to(self.device), images[s_size:, :, :].to(self.device)
             sclass_inds, qclass_inds = class_inds[:s_size, :].to(self.device), class_inds[s_size:, :].to(self.device)
-            
+
             optimizer.zero_grad()
             predictions, query_proto = model.update_support_and_classify(class_labels, simages, sclass_inds, qimages)
             loss = model.loss(query_proto, predictions, qclass_inds)
@@ -395,7 +402,35 @@ class DynamicMetaTrainer(ControlledMetaTrainer):
             self._reset_train_iteration_classes()
             
         self.model = model
-        print('Best episode: ', best_epi+1)
+        if best_epi is not None:
+            print('Best episode: ', best_epi+1)
+
+class FTDynamicMetaTrainer(DynamicMetaTrainer):
+    def __init__(self, model, shots, n_ways, dataset_config, train_n_ways=None, n_query=None, device='cpu'):
+        super().__init__(model, shots, n_ways, dataset_config, train_n_ways=train_n_ways, n_query=n_query, device=device)
+
+    def initialise_datasets(self, ds_config):
+        img_info = ds_config.img_info
+        img_path = ds_config.img_path
+        classes_split_map = ds_config.classes_split_map
+        label_names_map = ds_config.label_names_map
+        mean_std = ds_config.mean_std
+
+        query_image_ids, support_image_ids = get_query_and_support_ids(img_info, ds_config.training_split_path)
+        self.query_image_ids = query_image_ids
+
+        test_ft_image_ids, test_img_ids = get_query_and_support_ids(img_info, ds_config.test_split_path, split='test')
+
+        self.train_dataset = MDataset(img_path, img_info, support_image_ids, label_names_map, classes_split_map['train'], mean_std=mean_std)
+        self.val_dataset = _create_dataset(img_path, img_info, label_names_map, classes_split_map, 'val', mean_std)
+        self.test_dataset = MDataset(img_path, img_info, test_img_ids, label_names_map, classes_split_map['test'], mean_std=mean_std)
+        self.test_ft_dataset = MDataset(img_path, img_info, test_ft_image_ids, label_names_map, classes_split_map['test'], mean_std=mean_std)
+
+    def initialise_dataloaders(self):
+        self.train_loader = _create_dataloader(self.train_dataset, self.shots, self.train_n_ways, n_query=self.n_query)
+        self.val_loader = _create_dataloader(self.val_dataset, self.shots, self.n_ways, n_query=self.n_query)
+        self.test_loader = _create_dataloader(self.test_dataset, self.shots, self.n_ways, n_query=self.n_query)
+        self.test_ft_loader = _create_dataloader(self.test_ft_dataset, self.shots, self.n_ways, n_query=self.n_query)
 
 class MDynamicMetaTrainer(DynamicMetaTrainer):
     def __init__(self, model, shots, n_ways, dataset_config, train_n_ways=None, n_query=None, device='cpu'):

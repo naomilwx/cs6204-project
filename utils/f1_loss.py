@@ -1,6 +1,8 @@
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torchvision.ops import sigmoid_focal_loss
+
 
 class F1Loss(nn.Module):
     '''Calculate F1 score.
@@ -41,7 +43,31 @@ class F1Loss(nn.Module):
 
         spec = tn/ (tn + fp + self.epsilon)
         return 1-f1.mean() + self.spec_weight*(1-spec.mean())
-    
+
+class LikelihoodRatioLoss(nn.Module):
+    def __init__(self, epsilon=1e-7, logits=True) -> None:
+        super().__init__()
+        self.epsilon = epsilon
+        self.logits = logits
+
+    def forward(self, y_pred, y_true):
+        assert y_pred.ndim == 2
+        assert y_true.ndim == 2
+        if self.logits:
+            y_pred = y_pred.sigmoid()
+        
+        tp = (y_true * y_pred).sum(dim=0).to(torch.float32)
+        tn = ((1 - y_true) * (1 - y_pred)).sum(dim=0).to(torch.float32)
+        fp = ((1 - y_true) * y_pred).sum(dim=0).to(torch.float32)
+        fn = (y_true * (1 - y_pred)).sum(dim=0).to(torch.float32)
+
+        recall = tp / (tp + fn + self.epsilon)
+        spec = tn/ (tn + fp + self.epsilon)
+
+        lrp = recall/(1-spec+self.epsilon)
+        lrn = (1-recall)/(spec + self.epsilon)
+        
+        return -lrp -lrn
 
 class BalAccuracyLoss(nn.Module):
     def __init__(self, epsilon=1e-7, logits=True, harmonic_mean=True):
@@ -92,3 +118,16 @@ class MCCLoss(nn.Module):
         # Between -1 to 1, 0 is random, -1 is perfect negative correlation
         mcc = (tp*tn - fp*fn)/(torch.sqrt(((tp+fp) * (tp+fn) * (tn+fp) * (tn+fn))) + self.epsilon)
         return 1 - mcc.mean()
+
+
+class FocalLoss(nn.Module):
+    def __init__(self, logits=False):
+        super().__init__()
+        self.logits = logits
+
+    
+    def forward(self, inputs, targets):
+        if self.logits:
+            targets = targets.sigmoid()
+        return sigmoid_focal_loss(inputs, targets, reduction='mean')
+

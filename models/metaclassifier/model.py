@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-from models.metaclassifier.base import MetaModelBase, image_prototype_logits
+from models.metaclassifier.base import MetaModelBase, image_prototype_logits, laplace_dist_prob
 from utils.prototype import class_variance
 from utils.f1_loss import BalAccuracyLoss
 
@@ -15,8 +15,16 @@ class MetaModelWithAttention(MetaModelBase):
     def loss(self, query_prototypes, predictions, label_inds):
         attn_loss = 0
         if self.attention_loss_weight != 0:
-            attn_loss = self.attn_model.loss(self.class_label_embeddings, query_prototypes, label_inds)
+            # attn_loss = self.attn_model.loss(self.class_label_embeddings, query_prototypes, label_inds)
+            attn_loss = self.encoding_space_loss(self.class_label_embeddings, query_prototypes, label_inds)
         return super().loss(query_prototypes, predictions, label_inds) + self.attention_loss_weight * attn_loss
+    
+    def encoding_space_loss(self, text_embeddings, prototypes, label_inds):
+        classes = torch.nonzero(label_inds)[:,1] # (Np,)
+        class_prototypes = prototypes[label_inds.bool()] # (Np, D)
+
+        labels = nn.functional.one_hot(classes)
+        return self.encoder.loss(text_embeddings, class_prototypes, labels)
 
     def freeze_child_models(self):
         self.encoder.set_trainable(False, False, include_text_bb=False, include_logit_scale=False)
@@ -74,11 +82,12 @@ class ClsModel(MetaModelWithAttention):
         return out.squeeze(2), query_prototypes # NxLx1 -> NxL
     
 class ProtoNetAttention(MetaModelWithAttention):
-    def __init__(self, imgtxt_encoder, attn_model, class_prototype_aggregator, distance_func, scale=1.0):
+    def __init__(self, imgtxt_encoder, attn_model, class_prototype_aggregator, distance_func, scale=1.0, dist_prob=laplace_dist_prob):
         super(ProtoNetAttention, self).__init__(imgtxt_encoder, attn_model, class_prototype_aggregator)
         self.distance_func = distance_func
         self.scale = nn.Parameter(torch.tensor(scale))
         self.loss_fn = BalAccuracyLoss(logits=False)
+        self.dist_prob = dist_prob
 
     def reset_scale(self):
         self.scale = nn.Parameter(torch.tensor(1.0))
@@ -90,7 +99,9 @@ class ProtoNetAttention(MetaModelWithAttention):
     def forward(self, query_images):
         query_image_embeddings = self.encoder.embed_image(query_images, pool=False)
         query_prototypes = self.attn_model(self.class_label_embeddings, query_image_embeddings)
-        probabilities = (-self.distance_func(self.class_prototypes, query_prototypes) * self.get_scale()).exp()
+        # probabilities = (-self.distance_func(self.class_prototypes, query_prototypes) * self.get_scale()).exp()
+        probabilities = self.dist_prob(self.distance_func(self.class_prototypes, query_prototypes), self.get_scale())
+
 
         return probabilities, query_prototypes
     

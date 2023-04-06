@@ -10,7 +10,7 @@ from medmnist.evaluator import getACC, getAUC
 
 from utils.sampling import MultilabelBalancedRandomSampler, create_single_class_sampler
 from utils.metrics import AverageMeter, calculate_auc
-from torchmetrics.classification import MultilabelRecall, MultilabelSpecificity, MultilabelF1Score
+from torchmetrics.classification import MultilabelRecall, MultilabelSpecificity, MultilabelF1Score, MultilabelAccuracy
 
 class Trainer:
   def __init__(self, model, datasets, batch_size, device='cpu', balance=False):
@@ -165,6 +165,7 @@ class DSTrainer:
         f1_func = MultilabelF1Score(num_labels=num_labels).to(self.device)
         specificity = MultilabelSpecificity(num_labels=num_labels).to(self.device)
         recall = MultilabelRecall(num_labels=num_labels).to(self.device)
+        acc_func = MultilabelAccuracy(num_labels=num_labels).to(self.device)
 
         with torch.no_grad():
             for images, class_inds in dataloader:
@@ -187,6 +188,7 @@ class DSTrainer:
                 rec_meter.update(rec.item(), len(class_inds))
 
                 if verbose:
-                  print(f"Loss {loss} | F1 {f1} | AUC {auc} | Specificity {spec} | Recall {rec} | Bal Acc {(spec+rec)/2}")
+                  acc = acc_func(predictions, class_inds)
+                  print(f"Loss {loss} | F1 {f1} | AUC {auc} | Specificity {spec} | Recall {rec} | Bal Acc {(spec+rec)/2} | Raw Acc {acc}")
 
         return loss_meter.average(), f1_meter.average(), auc_meter.average(), spec_meter.average(), rec_meter.average()

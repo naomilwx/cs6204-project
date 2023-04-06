@@ -40,3 +40,6 @@ class DatasetConfig:
         self.label_names_map = label_names_map
         self.classes_split_map = classes_split_map
         self.mean_std = mean_std
+
+    def set_test_split_path(self, path):
+        self.test_split_path = path

@@ -7,7 +7,7 @@ def set_seed(seed):
     torch.manual_seed(seed)
     random.seed(seed)
     
-def run_experiment(mtrainer, seed, num_episodes=60):
+def run_experiment(mtrainer, seed, num_episodes=60, run_validation=False):
     dataloaders = {
         'query': mtrainer.create_query_eval_dataloader(),
         'val': mtrainer.val_loader,
@@ -19,6 +19,8 @@ def run_experiment(mtrainer, seed, num_episodes=60):
         model = mtrainer.model
     
     for k, d in dataloaders.items():
+        if k == 'val' and not run_validation:
+            continue
         set_seed(seed)
         print(k)
         print(mtrainer.run_eval(model, d, verbose=True, num_episodes=num_episodes))

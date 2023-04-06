@@ -31,6 +31,14 @@ def image_prototype_logits(prototypes, image_embeddings, scale=1):
     # (fac * image_embeddings).sum(axis=2)
     return cosine_similarity(prototypes, image_embeddings) * scale
 
+def laplace_dist_prob(dist, scale):
+    return 1 / ((dist * scale).exp())
+
+def gaussian_dist_prob(dist, scale):
+    v = (dist*scale)**2
+    return 1/v.exp()
+
+
 class MetaModelBase(nn.Module):
     def __init__(self, imgtxt_encoder, class_prototype_aggregator):
         super().__init__()
@@ -38,6 +46,9 @@ class MetaModelBase(nn.Module):
         self.class_prototype_aggregator = class_prototype_aggregator
         self.loss_fn = BalAccuracyLoss(logits=True)
         self.use_variance = False
+
+    def set_loss_function(self, loss_fn):
+        self.loss_fn = loss_fn
     
     def set_class_prototype_details(self, class_labels, support_images, support_label_inds):
         image_embeddings = self.encoder.embed_image(support_images, pool=True) # (B, D)
