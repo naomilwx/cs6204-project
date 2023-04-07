@@ -46,6 +46,7 @@ class MetaModelBase(nn.Module):
         self.class_prototype_aggregator = class_prototype_aggregator
         self.loss_fn = BalAccuracyLoss(logits=True)
         self.use_variance = False
+        self.other_loss_weight = 0
 
     def set_loss_function(self, loss_fn):
         self.loss_fn = loss_fn

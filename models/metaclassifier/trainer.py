@@ -337,7 +337,7 @@ class DynamicMetaTrainer(ControlledMetaTrainer):
     def _reset_train_iteration_classes(self):
         self.train_dataset.sampler.reset_sample_classes()
 
-    def run_train(self, episodes, lr=1e-5, min_lr=5e-7, lr_change_step=5, update_interval=50, train_dataloader=None):
+    def run_train(self, episodes, lr=1e-5, min_lr=5e-7, lr_change_step=5, update_interval=50, train_dataloader=None, toggle_interval=None):
         if train_dataloader is None:
             train_dataloader = self.train_loader
         model = self.model.to(self.device)
@@ -359,6 +359,9 @@ class DynamicMetaTrainer(ControlledMetaTrainer):
         n_ways = self.train_n_ways
         s_size = self.shots * n_ways
         tr_iterator = DataloaderIterator(train_dataloader)
+
+        other_loss_weight = model.other_loss_weight
+        weight_toggle = 1
 
         for i in range(episodes):
             model.train()
@@ -398,6 +401,10 @@ class DynamicMetaTrainer(ControlledMetaTrainer):
                 f1_meter.reset()
                 spec_meter.reset()
                 rec_meter.reset()
+
+            if toggle_interval is not None and (i % toggle_interval) == (toggle_interval-1):
+                weight_toggle = (weight_toggle + 1) % 2
+                model.other_loss_weight = other_loss_weight * weight_toggle
             
             self._reset_train_iteration_classes()
             

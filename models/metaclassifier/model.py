@@ -14,10 +14,10 @@ class MetaModelWithAttention(MetaModelBase):
 
     def loss(self, query_prototypes, predictions, label_inds):
         attn_loss = 0
-        if self.attention_loss_weight != 0:
+        if self.other_loss_weight != 0:
             # attn_loss = self.attn_model.loss(self.class_label_embeddings, query_prototypes, label_inds)
             attn_loss = self.encoding_space_loss(self.class_label_embeddings, query_prototypes, label_inds)
-        return super().loss(query_prototypes, predictions, label_inds) + self.attention_loss_weight * attn_loss
+        return self.loss_fn(predictions, label_inds.float()) + self.other_loss_weight * attn_loss
     
     def encoding_space_loss(self, text_embeddings, prototypes, label_inds):
         classes = torch.nonzero(label_inds)[:,1] # (Np,)
@@ -33,9 +33,9 @@ class MetaModelWithAttention(MetaModelBase):
     def set_attention_model_trainable(self, trainable, weight = 0.1):
         self.attn_model.set_trainable(trainable)
         if trainable:
-            self.attention_loss_weight = weight
+            self.other_loss_weight = weight
         else:
-            self.attention_loss_weight = 0
+            self.other_loss_weight = 0
     
     def set_class_prototype_details(self, class_labels, support_images, support_label_inds):
         text_embeddings, image_embeddings = self.encoder(class_labels, support_images, pool=False)
